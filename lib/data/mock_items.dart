@@ -1,0 +1,68 @@
+import '../models/item.dart';
+
+const List<Item> mockItems = [
+  Item(
+    id: 1,
+    name: 'MacBook Pro',
+    category: 'Electronics',
+    quantity: 1,
+    icon: 'laptop',
+    hasQr: true,
+  ),
+  Item(
+    id: 2,
+    name: 'USB-C Charger',
+    category: 'Electronics',
+    quantity: 1,
+    icon: 'charger',
+    hasQr: true,
+  ),
+  Item(
+    id: 3,
+    name: 'Power Bank',
+    category: 'Electronics',
+    quantity: 1,
+    icon: 'battery',
+    hasQr: false,
+  ),
+  Item(
+    id: 4,
+    name: 'Passport',
+    category: 'Documents',
+    quantity: 1,
+    icon: 'passport',
+    hasQr: true,
+  ),
+  Item(
+    id: 5,
+    name: 'National ID',
+    category: 'Documents',
+    quantity: 1,
+    icon: 'id',
+    hasQr: false,
+  ),
+  Item(
+    id: 6,
+    name: 'Jacket',
+    category: 'Clothing',
+    quantity: 1,
+    icon: 'jacket',
+    hasQr: false,
+  ),
+  Item(
+    id: 7,
+    name: 'T-Shirt',
+    category: 'Clothing',
+    quantity: 1,
+    icon: 'shirt',
+    hasQr: false,
+  ),
+  Item(
+    id: 8,
+    name: 'Toothbrush',
+    category: 'Personal Care',
+    quantity: 1,
+    icon: 'toothbrush',
+    hasQr: false,
+  ),
+];
