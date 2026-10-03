@@ -4,6 +4,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../theme/app_theme.dart';
 import 'repository.dart';
 import 'scanner.dart';
+import 'flow.dart';
 
 const categories = ['Electronics','Documents','Clothing','Toiletries','Other'];
 const activityTypes = ['Trip','School','Work','Daily','Other'];
