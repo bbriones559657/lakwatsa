@@ -141,8 +141,30 @@ class _ItemEditorState extends State<ItemEditor>{
     if(mounted)Navigator.pop(context);}catch(e){notice(context,e);}finally{if(mounted)setState(()=>busy=false);}
  }
  Future<void> remove()async{
-   try{await widget.db.deleteItem(latest!.id);if(mounted)Navigator.pop(context);}
-   catch(e){notice(context,e);}
+   try{
+     final used=await widget.db.listsUsing(latest!.id);
+     if(!mounted)return;
+     if(used.isNotEmpty){
+       await showDialog<void>(context:context,builder:(d)=>AlertDialog(
+         title:const Text('Cannot Delete Item'),
+         content:Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.start,children:[
+           Text('Remove this Item from these Lists before deleting it:',style:AppTextStyles.body),
+           for(final list in used)ListTile(title:Text(list.name),trailing:const Icon(Icons.chevron_right),
+             onTap:(){
+               Navigator.pop(d);
+               Navigator.push(context,MaterialPageRoute(builder:(_)=>ListDetails(widget.db,list)));
+             })]),
+         actions:[TextButton(onPressed:()=>Navigator.pop(d),child:const Text('OK'))]));
+       return;
+     }
+     final ok=await showDialog<bool>(context:context,builder:(d)=>AlertDialog(
+       title:const Text('Delete Item?'),content:Text('Delete '+latest!.name+' from My Items?'),
+       actions:[TextButton(onPressed:()=>Navigator.pop(d,false),child:const Text('Cancel')),
+         TextButton(onPressed:()=>Navigator.pop(d,true),child:const Text('Delete'))]));
+     if(ok!=true)return;
+     await widget.db.deleteItem(latest!.id);
+     if(mounted)Navigator.pop(context);
+   }catch(e){notice(context,e);}
  }
  @override Widget build(BuildContext context)=>Scaffold(appBar:AppBar(title:Text(widget.item==null?'Add Item':'Edit Item')),
    body:ListView(padding:const EdgeInsets.all(20),children:[
