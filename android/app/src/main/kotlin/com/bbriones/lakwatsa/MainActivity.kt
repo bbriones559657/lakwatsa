@@ -1,4 +1,4 @@
-package com.example.lakwatsa
+package com.bbriones.lakwatsa
 
 import io.flutter.embedding.android.FlutterActivity
 

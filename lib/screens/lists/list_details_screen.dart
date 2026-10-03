@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import '../../theme/app_theme.dart';
 import '../../models/item.dart';
 import 'add_items_screen.dart';
-import '../../data/mock_items.dart';
 
 class ListDetailsScreen extends StatefulWidget {
   final String listName;

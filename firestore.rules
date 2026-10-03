@@ -1,0 +1,101 @@
+rules_version = '2';
+// Replace the public test-mode rules; do not retain their allow-all wildcard.
+// Both app versions use Firebase Authentication UIDs as their user document IDs.
+// Unmatched document paths are denied; there is no date-based expiry.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function owner(uid) { return request.auth != null && request.auth.uid == uid; }
+    function named(d) { return d.name is string && d.name.size() > 0 && d.name.size() <= 100; }
+    function validItem(d) {
+      return d.keys().hasOnly(['name','category','quantity','archived']) && named(d)
+        && d.category in ['Electronics','Documents','Clothing','Personal Care','Other']
+        && d.quantity is int && d.quantity >= 1 && d.quantity <= 999 && d.archived is bool;
+    }
+    function validList(d) {
+      return d.keys().hasOnly(['name','quantities']) && named(d)
+        && d.quantities is map && d.quantities.size() <= 200;
+    }
+    function validActivity(d) {
+      return d.keys().hasOnly(['name','type','status','startsAt','endsAt','reminderMinutes','items','before','returned','draft','draftStartedAt','reminderUpdatedAt'])
+        && named(d) && d.type in ['Trip','School','Work','Daily','Other']
+        && d.status in ['planned','active','completed','cancelled']
+        && d.startsAt is string && d.endsAt is string && d.endsAt > d.startsAt
+        && d.reminderMinutes is int && d.reminderMinutes >= 0 && d.reminderMinutes <= 1440
+        && d.items is map && d.items.size() > 0 && d.items.size() <= 200
+        && d.draft is map && d.draft.keys().hasOnly(d.items.keys())
+        && d.draft.values().hasOnly(['manual','qr']);
+    }
+    function validCheck(c, d) {
+      return c is map && c.keys().hasOnly(['startedAt','completedAt','itemIds','found'])
+        && c.startedAt is string && c.completedAt is string
+        && c.itemIds is list && c.itemIds.toSet() == d.items.keys().toSet()
+        && c.found is map && c.found == resource.data.draft;
+    }
+    // Existing app: preserve its supplied collection layout and write formats.
+    // These compatibility rules enforce ownership, not the rebuilt schema.
+    match /users/{uid} {
+      allow read, write: if owner(uid);
+      match /items/{itemId} {
+        allow read, write: if owner(uid);
+      }
+      match /lists/{listId} {
+        allow read, write: if owner(uid);
+        match /items/{itemId} {
+          allow read, write: if owner(uid);
+        }
+      }
+      match /activities/{activityId} {
+        allow read, write: if owner(uid);
+        match /items/{itemId} {
+          allow read, write: if owner(uid);
+        }
+        match /checks/{checkId} {
+          allow read, write: if owner(uid);
+          match /items/{itemId} {
+            allow read, write: if owner(uid);
+          }
+        }
+      }
+    }
+    match /lakwatsa_v2_users/{uid}/items/{id} {
+      allow read: if owner(uid);
+      allow create, update: if owner(uid) && validItem(request.resource.data);
+      // Archive instead of deleting referenced inventory records.
+      allow delete: if false;
+    }
+    match /lakwatsa_v2_users/{uid}/lists/{id} {
+      allow read, delete: if owner(uid);
+      allow create, update: if owner(uid) && validList(request.resource.data);
+    }
+    match /lakwatsa_v2_users/{uid}/activities/{id} {
+      allow read: if owner(uid);
+      allow create: if owner(uid) && validActivity(request.resource.data)
+        && request.resource.data.status == 'planned'
+        && request.resource.data.before == null && request.resource.data.returned == null
+        && request.resource.data.draft.size() == 0 && request.resource.data.draftStartedAt == null;
+      allow update: if owner(uid) && validActivity(request.resource.data)
+        && resource.data.status in ['planned','active']
+        && request.resource.data.name == resource.data.name
+        && request.resource.data.type == resource.data.type
+        && request.resource.data.startsAt == resource.data.startsAt
+        && request.resource.data.items.diff(resource.data.items).changedKeys().size() == 0
+        && request.resource.data.items.diff(resource.data.items).removedKeys().size() == 0
+        && (
+          (request.resource.data.status == resource.data.status
+            && request.resource.data.before == resource.data.before
+            && request.resource.data.returned == resource.data.returned)
+          || (request.resource.data.status == 'cancelled'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']))
+          || (resource.data.status == 'planned' && request.resource.data.status == 'active'
+            && validCheck(request.resource.data.before, resource.data)
+            && request.resource.data.returned == null && request.resource.data.draft.size() == 0
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','before','draft','draftStartedAt']))
+          || (resource.data.status == 'active' && request.resource.data.status == 'completed'
+            && validCheck(request.resource.data.returned, resource.data)
+            && request.resource.data.before == resource.data.before && request.resource.data.draft.size() == 0
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','returned','draft','draftStartedAt']))
+        );
+      allow delete: if false;
+    }
+  }
+}
