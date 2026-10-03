@@ -1,0 +1,37 @@
+name: Build Lakwatsa Android APK
+on:
+  push:
+    branches:
+      - lakwatsav3
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.0'
+          cache: true
+      - name: Restore packages
+        run: flutter pub get
+      - name: Verify Firebase configuration
+        run: |
+          if [ ! -f lib/firebase_options.dart ]; then
+            echo 'Run flutterfire configure locally and push lib/firebase_options.dart to lakwatsav3.' >&2
+            exit 1
+          fi
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos
+      - name: Build APK
+        run: flutter build apk --debug
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: lakwatsa-v3-debug-apk
+          path: build/app/outputs/flutter-apk/app-debug.apk
