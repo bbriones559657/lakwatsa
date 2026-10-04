@@ -3,8 +3,21 @@ import '../models/activity_item.dart';
 import '../models/item.dart';
 import '../models/activity_check.dart';
 import '../models/activity_check_item.dart';
+import '../models/activity_check_draft.dart';
 
 abstract class ActivityRepository {
+  Future<ActivityCheckDraft?> getCheckDraft({
+    required String activityId,
+    required String checkType,
+  });
+
+  Future<void> saveCheckDraft({
+    required String activityId,
+    required String checkType,
+    required DateTime startedAt,
+    required Map<String, String> foundMethods,
+  });
+
   Stream<List<Activity>> watchActivities();
 
   Stream<List<ActivityItem>> watchActivityItems(String activityId);

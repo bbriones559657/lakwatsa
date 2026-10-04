@@ -6,6 +6,7 @@ import '../models/activity_item.dart';
 import 'activity_repository.dart';
 import '../models/activity_check.dart';
 import '../models/activity_check_item.dart';
+import '../models/activity_check_draft.dart';
 
 class FirestoreActivityRepository implements ActivityRepository {
   final FirebaseFirestore firestore;
@@ -18,6 +19,70 @@ class FirestoreActivityRepository implements ActivityRepository {
 
   CollectionReference<Map<String, dynamic>> get _activitiesCollection {
     return firestore.collection('users').doc(userId).collection('activities');
+  }
+
+  DocumentReference<Map<String, dynamic>> _draftDocument({
+    required String activityId,
+    required String checkType,
+  }) {
+    final draftId = switch (checkType) {
+      'BEFORE_ACTIVITY' => 'draft_before_activity',
+      'RETURN' => 'draft_return',
+      _ => throw ArgumentError.value(checkType, 'checkType'),
+    };
+
+    return _activitiesCollection
+        .doc(activityId)
+        .collection('checks')
+        .doc(draftId);
+  }
+
+  @override
+  Future<ActivityCheckDraft?> getCheckDraft({
+    required String activityId,
+    required String checkType,
+  }) async {
+    final document = await _draftDocument(
+      activityId: activityId,
+      checkType: checkType,
+    ).get();
+
+    final data = document.data();
+    if (data == null) return null;
+
+    final methods = <String, String>{};
+    final raw = data['foundMethods'];
+    if (raw is Map) {
+      for (final entry in raw.entries) {
+        if (entry.key is String &&
+            (entry.value == 'QR' || entry.value == 'MANUAL')) {
+          methods[entry.key as String] = entry.value as String;
+        }
+      }
+    }
+
+    return ActivityCheckDraft(
+      startedAt: _toDateTime(data['startedAt']) ?? DateTime.now(),
+      foundMethods: methods,
+    );
+  }
+
+  @override
+  Future<void> saveCheckDraft({
+    required String activityId,
+    required String checkType,
+    required DateTime startedAt,
+    required Map<String, String> foundMethods,
+  }) async {
+    await _draftDocument(activityId: activityId, checkType: checkType).set({
+      // Deliberately not a completed check: History queries by check type.
+      'type': 'DRAFT',
+      'checkType': checkType,
+      'status': 'IN_PROGRESS',
+      'startedAt': Timestamp.fromDate(startedAt),
+      'foundMethods': Map<String, String>.from(foundMethods),
+      'updatedAt': Timestamp.now(),
+    });
   }
 
   @override
@@ -112,6 +177,7 @@ class FirestoreActivityRepository implements ActivityRepository {
       'updatedAt': Timestamp.fromDate(now),
     });
 
+    batch.delete(_draftDocument(activityId: activityId, checkType: 'RETURN'));
     await batch.commit();
   }
 
@@ -159,6 +225,9 @@ class FirestoreActivityRepository implements ActivityRepository {
       'updatedAt': Timestamp.fromDate(now),
     });
 
+    batch.delete(
+      _draftDocument(activityId: activityId, checkType: 'BEFORE_ACTIVITY'),
+    );
     await batch.commit();
   }
 

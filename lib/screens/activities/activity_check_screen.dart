@@ -4,6 +4,7 @@ import '../../models/activity.dart' as model;
 import '../../models/activity_item.dart';
 import '../../repositories/firestore_activity_repository.dart';
 import '../../services/auth_service.dart';
+import '../../services/check_draft_writer.dart';
 import 'activity_qr_scanner_screen.dart';
 import '../../theme/app_theme.dart';
 
@@ -19,9 +20,16 @@ class ActivityCheckScreen extends StatefulWidget {
 class _ActivityCheckScreenState extends State<ActivityCheckScreen> {
   FirestoreActivityRepository? activityRepository;
 
+  // Reuse the Firestore subscription instead of restarting it on every tap.
+  Stream<List<ActivityItem>>? _activityItemsStream;
+
   final Map<String, String> foundMethods = {};
 
-  late final DateTime checkStartedAt;
+  late DateTime checkStartedAt;
+  CheckDraftWriter? _draftWriter;
+  bool _loadingDraft = true;
+  Object? _loadError;
+  Object? _saveError;
 
   bool isSaving = false;
 
@@ -35,7 +43,53 @@ class _ActivityCheckScreenState extends State<ActivityCheckScreen> {
 
     if (user != null) {
       activityRepository = FirestoreActivityRepository(userId: user.uid);
+      _activityItemsStream =
+          activityRepository!.watchActivityItems(widget.activity.id);
+      _draftWriter = CheckDraftWriter(
+        write: (snapshot) => activityRepository!.saveCheckDraft(
+          activityId: widget.activity.id,
+          checkType: 'BEFORE_ACTIVITY',
+          startedAt: checkStartedAt,
+          foundMethods: snapshot,
+        ),
+        onError: (error) {
+          if (mounted) setState(() => _saveError = error);
+        },
+        onSaved: () {
+          if (mounted) setState(() => _saveError = null);
+        },
+      );
+      _restoreDraft();
+    } else {
+      _loadingDraft = false;
     }
+  }
+
+  Future<void> _restoreDraft() async {
+    try {
+      final draft = await activityRepository!.getCheckDraft(
+        activityId: widget.activity.id,
+        checkType: 'BEFORE_ACTIVITY',
+      );
+      if (!mounted) return;
+      setState(() {
+        if (draft != null) {
+          checkStartedAt = draft.startedAt;
+          foundMethods
+            ..clear()
+            ..addAll(draft.foundMethods);
+        }
+        _loadError = null;
+      });
+    } catch (error) {
+      if (mounted) setState(() => _loadError = error);
+    } finally {
+      if (mounted) setState(() => _loadingDraft = false);
+    }
+  }
+
+  void _saveDraft() {
+    _draftWriter?.save(foundMethods);
   }
 
   @override
@@ -61,8 +115,30 @@ class _ActivityCheckScreenState extends State<ActivityCheckScreen> {
       );
     }
 
+    if (_loadingDraft) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_loadError != null) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Could not load your saved check.'),
+            TextButton(
+              onPressed: () {
+                setState(() => _loadingDraft = true);
+                _restoreDraft();
+              },
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      );
+    }
+
     return StreamBuilder<List<ActivityItem>>(
-      stream: activityRepository!.watchActivityItems(widget.activity.id),
+      stream: _activityItemsStream,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return Center(
@@ -86,7 +162,26 @@ class _ActivityCheckScreenState extends State<ActivityCheckScreen> {
 
         return Column(
           children: [
-            _ProgressSection(found: foundMethods.length, total: items.length),
+            _ProgressSection(
+              found: items.where((item) => foundMethods.containsKey(item.id)).length,
+              total: items.length,
+            ),
+
+            if (_saveError != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Row(
+                  children: [
+                    const Expanded(
+                      child: Text('Progress not saved. Check your connection.'),
+                    ),
+                    TextButton(
+                      onPressed: _saveDraft,
+                      child: const Text('Retry'),
+                    ),
+                  ],
+                ),
+              ),
 
             Expanded(
               child: items.isEmpty
@@ -117,6 +212,7 @@ class _ActivityCheckScreenState extends State<ActivityCheckScreen> {
                                   foundMethods[item.id] = 'MANUAL';
                                 }
                               });
+                              _saveDraft();
                             },
                           ),
                         );
@@ -216,10 +312,12 @@ class _ActivityCheckScreenState extends State<ActivityCheckScreen> {
         ..clear()
         ..addAll(result);
     });
+    _saveDraft();
   }
 
   Future<void> _confirmFinish(List<ActivityItem> items) async {
-    final uncheckedCount = items.length - foundMethods.length;
+    final uncheckedCount =
+        items.where((item) => !foundMethods.containsKey(item.id)).length;
 
     final shouldFinish = await showDialog<bool>(
       context: context,
@@ -287,6 +385,9 @@ class _ActivityCheckScreenState extends State<ActivityCheckScreen> {
     });
 
     try {
+      // Prevent an earlier queued draft write from recreating the draft.
+      final writer = _draftWriter;
+      if (writer != null) await writer.flush();
       await activityRepository!.completeBeforeActivityCheck(
         activityId: widget.activity.id,
         activityItems: items,
