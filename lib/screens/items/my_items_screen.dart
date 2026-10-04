@@ -379,7 +379,7 @@ class _CategoryChips extends StatelessWidget {
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 20),
         itemCount: categories.length,
-        separatorBuilder: (_, __) {
+        separatorBuilder: (_, _) {
           return const SizedBox(width: 8);
         },
         itemBuilder: (context, index) {
