@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import 'home/home_screen.dart';
 import 'items/my_items_screen.dart';
+import 'lists/lists_screen.dart';
+import 'activities/activities_screen.dart';
 import '../theme/app_theme.dart';
 
 class MainScreen extends StatefulWidget {
@@ -17,8 +19,8 @@ class _MainScreenState extends State<MainScreen> {
   final pages = const [
     HomeScreen(),
     MyItemsScreen(),
-    PlaceholderScreen(title: 'Lists'),
-    PlaceholderScreen(title: 'Activities'),
+    ListsScreen(),
+    ActivitiesScreen(),
   ];
 
   @override
@@ -88,16 +90,5 @@ class _BottomNavigation extends StatelessWidget {
         }),
       ),
     );
-  }
-}
-
-class PlaceholderScreen extends StatelessWidget {
-  final String title;
-
-  const PlaceholderScreen({super.key, required this.title});
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(child: Text(title, style: AppTextStyles.heading));
   }
 }

@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../../models/item_list.dart';
+import '../../repositories/firestore_list_repository.dart';
+import '../../services/auth_service.dart';
 import '../../theme/app_theme.dart';
 import 'list_details_screen.dart';
 
@@ -13,15 +16,26 @@ class ListsScreen extends StatefulWidget {
 class _ListsScreenState extends State<ListsScreen> {
   bool editMode = false;
 
-  final List<_ItemListData> lists = [
-    _ItemListData(name: 'Beach Trip', itemCount: 18, icon: Icons.beach_access),
-    _ItemListData(
-      name: 'School — Monday',
-      itemCount: 12,
-      icon: Icons.school_outlined,
-    ),
-    _ItemListData(name: 'Gym', itemCount: 8, icon: Icons.fitness_center),
-  ];
+  final TextEditingController searchController = TextEditingController();
+
+  FirestoreListRepository? listRepository;
+
+  @override
+  void initState() {
+    super.initState();
+
+    final user = AuthService().currentUser;
+
+    if (user != null) {
+      listRepository = FirestoreListRepository(userId: user.uid);
+    }
+  }
+
+  @override
+  void dispose() {
+    searchController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -37,36 +51,94 @@ class _ListsScreenState extends State<ListsScreen> {
                   editMode = !editMode;
                 });
               },
-              onAdd: () {
-                _showCreateListDialog();
-              },
+              onAdd: _showCreateListDialog,
             ),
             Expanded(
               child: Column(
                 children: [
                   const SizedBox(height: 16),
-                  const _SearchBar(),
-                  const SizedBox(height: 16),
-                  Expanded(
-                    child: _ListGrid(
-                      lists: lists,
-                      editMode: editMode,
-                      onDelete: (index) {
-                        _deleteList(index);
-                      },
-                      onTap: (index) {
-                        if (!editMode) {
-                          _openList(lists[index]);
-                        }
-                      },
-                    ),
+                  _SearchBar(
+                    controller: searchController,
+                    onChanged: (_) {
+                      setState(() {});
+                    },
                   ),
+                  const SizedBox(height: 16),
+                  Expanded(child: _buildLists()),
                 ],
               ),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildLists() {
+    if (listRepository == null) {
+      return Center(
+        child: Text('Please sign in again.', style: AppTextStyles.body),
+      );
+    }
+
+    return StreamBuilder<List<ItemList>>(
+      stream: listRepository!.watchLists(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Text(
+                'Failed to load lists.\n${snapshot.error}',
+                textAlign: TextAlign.center,
+                style: AppTextStyles.body,
+              ),
+            ),
+          );
+        }
+
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        final lists = snapshot.data ?? [];
+
+        final searchText = searchController.text.trim().toLowerCase();
+
+        final filteredLists = lists.where((list) {
+          if (searchText.isEmpty) {
+            return true;
+          }
+
+          return list.name.toLowerCase().contains(searchText);
+        }).toList();
+
+        if (lists.isEmpty) {
+          return const _EmptyState(
+            title: 'No lists yet',
+            message: 'Create your first reusable item list.',
+          );
+        }
+
+        if (filteredLists.isEmpty) {
+          return const _EmptyState(
+            title: 'No lists found',
+            message: 'Try a different search.',
+          );
+        }
+
+        return _ListGrid(
+          lists: filteredLists,
+          repository: listRepository!,
+          editMode: editMode,
+          onDelete: _deleteList,
+          onTap: (list) {
+            if (!editMode) {
+              _openList(list);
+            }
+          },
+        );
+      },
     );
   }
 
@@ -99,11 +171,13 @@ class _ListsScreenState extends State<ListsScreen> {
                         style: AppTextStyles.heading.copyWith(fontSize: 20),
                       ),
                       const SizedBox(height: 20),
+
                       Text(
                         'List Name',
                         style: AppTextStyles.bodyBold.copyWith(fontSize: 13),
                       ),
                       const SizedBox(height: 7),
+
                       TextField(
                         controller: controller,
                         style: AppTextStyles.bodyBold,
@@ -128,12 +202,15 @@ class _ListsScreenState extends State<ListsScreen> {
                           ),
                         ),
                       ),
+
                       const SizedBox(height: 20),
+
                       Text(
                         'Icon',
                         style: AppTextStyles.bodyBold.copyWith(fontSize: 13),
                       ),
                       const SizedBox(height: 8),
+
                       GestureDetector(
                         onTap: () async {
                           final icon = await _showIconLibrary(
@@ -190,7 +267,9 @@ class _ListsScreenState extends State<ListsScreen> {
                           ),
                         ),
                       ),
+
                       const SizedBox(height: 24),
+
                       Row(
                         mainAxisAlignment: MainAxisAlignment.end,
                         children: [
@@ -216,24 +295,55 @@ class _ListsScreenState extends State<ListsScreen> {
                                 borderRadius: BorderRadius.circular(4),
                               ),
                             ),
-                            onPressed: () {
+                            onPressed: () async {
                               final name = controller.text.trim();
 
                               if (name.isEmpty) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Please enter a list name.'),
+                                  ),
+                                );
                                 return;
                               }
 
-                              setState(() {
-                                lists.add(
-                                  _ItemListData(
-                                    name: name,
-                                    itemCount: 0,
-                                    icon: selectedIcon,
+                              if (listRepository == null) {
+                                return;
+                              }
+
+                              try {
+                                final list = ItemList(
+                                  id: '',
+                                  name: name,
+                                  icon: _iconToKey(selectedIcon),
+                                );
+
+                                await listRepository!.addList(list);
+
+                                if (!mounted) {
+                                  return;
+                                }
+
+                                Navigator.pop(dialogContext);
+
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('List created successfully.'),
                                   ),
                                 );
-                              });
+                              } catch (error) {
+                                if (!mounted) {
+                                  return;
+                                }
 
-                              Navigator.pop(dialogContext);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      'Failed to create list: $error',
+                                    ),
+                                  ),
+                                );
+                              }
                             },
                             child: const Text('Create'),
                           ),
@@ -381,6 +491,7 @@ class _ListsScreenState extends State<ListsScreen> {
                     ],
                   ),
                 ),
+
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 20),
                   child: Container(
@@ -403,7 +514,9 @@ class _ListsScreenState extends State<ListsScreen> {
                     ),
                   ),
                 ),
+
                 const SizedBox(height: 12),
+
                 Expanded(
                   child: ListView.builder(
                     padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
@@ -436,6 +549,7 @@ class _ListsScreenState extends State<ListsScreen> {
                                   ),
                               itemBuilder: (context, iconIndex) {
                                 final icon = category.icons[iconIndex];
+
                                 final isSelected = icon == selectedIcon;
 
                                 return GestureDetector(
@@ -479,12 +593,14 @@ class _ListsScreenState extends State<ListsScreen> {
     );
   }
 
-  void _deleteList(int index) {
-    final listName = lists[index].name;
+  Future<void> _deleteList(ItemList list) async {
+    if (listRepository == null) {
+      return;
+    }
 
-    showDialog(
+    final shouldDelete = await showDialog<bool>(
       context: context,
-      builder: (context) {
+      builder: (dialogContext) {
         return AlertDialog(
           backgroundColor: AppColors.background,
           shape: RoundedRectangleBorder(
@@ -496,13 +612,14 @@ class _ListsScreenState extends State<ListsScreen> {
             style: AppTextStyles.heading.copyWith(fontSize: 20),
           ),
           content: Text(
-            'Delete "$listName"? The items inside it will not be deleted.',
+            'Delete "${list.name}"? '
+            'The items inside it will not be deleted.',
             style: AppTextStyles.body,
           ),
           actions: [
             TextButton(
               onPressed: () {
-                Navigator.pop(context);
+                Navigator.pop(dialogContext, false);
               },
               child: Text('Cancel', style: AppTextStyles.bodyBold),
             ),
@@ -515,11 +632,7 @@ class _ListsScreenState extends State<ListsScreen> {
                 ),
               ),
               onPressed: () {
-                setState(() {
-                  lists.removeAt(index);
-                });
-
-                Navigator.pop(context);
+                Navigator.pop(dialogContext, true);
               },
               child: const Text('Delete'),
             ),
@@ -527,29 +640,41 @@ class _ListsScreenState extends State<ListsScreen> {
         );
       },
     );
+
+    if (shouldDelete != true) {
+      return;
+    }
+
+    try {
+      await listRepository!.deleteList(list.id);
+
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('List deleted.')));
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to delete list: $error')));
+    }
   }
 
-  void _openList(_ItemListData list) {
+  void _openList(ItemList list) {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) =>
-            ListDetailsScreen(listName: list.name, itemCount: list.itemCount),
+        builder: (context) {
+          return ListDetailsScreen(listId: list.id, listName: list.name);
+        },
       ),
     );
   }
-}
-
-class _ItemListData {
-  final String name;
-  final int itemCount;
-  final IconData icon;
-
-  const _ItemListData({
-    required this.name,
-    required this.itemCount,
-    required this.icon,
-  });
 }
 
 class _IconCategory {
@@ -581,7 +706,9 @@ class _Header extends StatelessWidget {
       child: Row(
         children: [
           Text('Lists', style: AppTextStyles.heading.copyWith(fontSize: 24)),
+
           const Spacer(),
+
           GestureDetector(
             onTap: onEdit,
             child: Container(
@@ -601,7 +728,9 @@ class _Header extends StatelessWidget {
               ),
             ),
           ),
+
           const SizedBox(width: 8),
+
           GestureDetector(
             onTap: onAdd,
             child: Container(
@@ -632,14 +761,16 @@ class _Header extends StatelessWidget {
 }
 
 class _SearchBar extends StatelessWidget {
-  const _SearchBar();
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
+
+  const _SearchBar({required this.controller, required this.onChanged});
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Container(
-        height: 48,
         decoration: BoxDecoration(
           color: AppColors.background,
           border: Border.all(color: AppColors.ink, width: 2),
@@ -648,14 +779,21 @@ class _SearchBar extends StatelessWidget {
             BoxShadow(color: AppColors.ink, offset: Offset(3, 3)),
           ],
         ),
-        alignment: Alignment.centerLeft,
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        child: Row(
-          children: [
-            const Icon(Icons.search, color: AppColors.ink, size: 20),
-            const SizedBox(width: 10),
-            Text('Search lists...', style: AppTextStyles.body),
-          ],
+        child: TextField(
+          controller: controller,
+          onChanged: onChanged,
+          style: AppTextStyles.body,
+          decoration: InputDecoration(
+            hintText: 'Search lists...',
+            hintStyle: AppTextStyles.body.copyWith(color: AppColors.muted),
+            prefixIcon: const Icon(
+              Icons.search,
+              color: AppColors.ink,
+              size: 20,
+            ),
+            border: InputBorder.none,
+            contentPadding: const EdgeInsets.symmetric(vertical: 14),
+          ),
         ),
       ),
     );
@@ -663,13 +801,15 @@ class _SearchBar extends StatelessWidget {
 }
 
 class _ListGrid extends StatelessWidget {
-  final List<_ItemListData> lists;
+  final List<ItemList> lists;
+  final FirestoreListRepository repository;
   final bool editMode;
-  final Function(int) onDelete;
-  final Function(int) onTap;
+  final ValueChanged<ItemList> onDelete;
+  final ValueChanged<ItemList> onTap;
 
   const _ListGrid({
     required this.lists,
+    required this.repository,
     required this.editMode,
     required this.onDelete,
     required this.onTap,
@@ -677,10 +817,6 @@ class _ListGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (lists.isEmpty) {
-      return Center(child: Text('No lists yet', style: AppTextStyles.body));
-    }
-
     return GridView.builder(
       padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -691,14 +827,17 @@ class _ListGrid extends StatelessWidget {
       ),
       itemCount: lists.length,
       itemBuilder: (context, index) {
+        final list = lists[index];
+
         return _ListCard(
-          list: lists[index],
+          list: list,
+          repository: repository,
           editMode: editMode,
           onDelete: () {
-            onDelete(index);
+            onDelete(list);
           },
           onTap: () {
-            onTap(index);
+            onTap(list);
           },
         );
       },
@@ -707,13 +846,15 @@ class _ListGrid extends StatelessWidget {
 }
 
 class _ListCard extends StatelessWidget {
-  final _ItemListData list;
+  final ItemList list;
+  final FirestoreListRepository repository;
   final bool editMode;
   final VoidCallback onDelete;
   final VoidCallback onTap;
 
   const _ListCard({
     required this.list,
+    required this.repository,
     required this.editMode,
     required this.onDelete,
     required this.onTap,
@@ -748,20 +889,40 @@ class _ListCard extends StatelessWidget {
                     borderRadius: BorderRadius.circular(4),
                   ),
                   alignment: Alignment.center,
-                  child: Icon(list.icon, color: AppColors.ink, size: 27),
+                  child: Icon(
+                    _getListIcon(list.icon),
+                    color: AppColors.ink,
+                    size: 27,
+                  ),
                 ),
+
                 const Spacer(),
+
                 Text(
                   list.name,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: AppTextStyles.bodyBold.copyWith(fontSize: 14),
                 ),
+
                 const SizedBox(height: 4),
-                Text('${list.itemCount} items', style: AppTextStyles.body),
+
+                StreamBuilder<List<String>>(
+                  stream: repository.watchListItemIds(list.id),
+                  builder: (context, snapshot) {
+                    final count = snapshot.data?.length ?? 0;
+
+                    return Text(
+                      '$count '
+                      '${count == 1 ? 'item' : 'items'}',
+                      style: AppTextStyles.body,
+                    );
+                  },
+                ),
               ],
             ),
           ),
+
           if (editMode)
             Positioned(
               top: 8,
@@ -791,4 +952,118 @@ class _ListCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _EmptyState extends StatelessWidget {
+  final String title;
+  final String message;
+
+  const _EmptyState({required this.title, required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 30),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.list_alt_outlined,
+              color: AppColors.muted,
+              size: 48,
+            ),
+
+            const SizedBox(height: 14),
+
+            Text(title, style: AppTextStyles.bodyBold.copyWith(fontSize: 16)),
+
+            const SizedBox(height: 5),
+
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: AppTextStyles.body,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+const Map<String, IconData> _listIconMap = {
+  // Travel
+  'beach': Icons.beach_access,
+  'flight': Icons.flight,
+  'luggage': Icons.luggage_outlined,
+  'car': Icons.directions_car_outlined,
+  'boat': Icons.directions_boat_outlined,
+  'map': Icons.map_outlined,
+  'hotel': Icons.hotel_outlined,
+  'explore': Icons.explore_outlined,
+
+  // School
+  'school': Icons.school_outlined,
+  'book': Icons.menu_book_outlined,
+  'book_alt': Icons.book_outlined,
+  'notes': Icons.edit_note_outlined,
+  'backpack': Icons.backpack_outlined,
+  'science': Icons.science_outlined,
+  'calculator': Icons.calculate_outlined,
+  'computer': Icons.computer_outlined,
+
+  // Work
+  'work': Icons.work_outline,
+  'briefcase': Icons.business_center_outlined,
+  'folder': Icons.folder_outlined,
+  'laptop': Icons.laptop_mac_outlined,
+  'desktop': Icons.desktop_windows_outlined,
+  'calendar': Icons.calendar_month_outlined,
+  'assignment': Icons.assignment_outlined,
+  'badge': Icons.badge_outlined,
+
+  // Fitness
+  'fitness': Icons.fitness_center,
+  'running': Icons.directions_run,
+  'bike': Icons.directions_bike,
+  'soccer': Icons.sports_soccer_outlined,
+  'basketball': Icons.sports_basketball_outlined,
+  'tennis': Icons.sports_tennis_outlined,
+  'swimming': Icons.pool_outlined,
+  'sports': Icons.sports_outlined,
+
+  // Daily
+  'home': Icons.home_outlined,
+  'shopping_bag': Icons.shopping_bag_outlined,
+  'cart': Icons.shopping_cart_outlined,
+  'food': Icons.restaurant_outlined,
+  'coffee': Icons.local_cafe_outlined,
+  'grocery': Icons.local_grocery_store_outlined,
+  'cleaning': Icons.cleaning_services_outlined,
+  'pets': Icons.pets_outlined,
+
+  // Other
+  'list': Icons.list_alt_outlined,
+  'star': Icons.star_outline,
+  'heart': Icons.favorite_border,
+  'event': Icons.event_outlined,
+  'gift': Icons.card_giftcard_outlined,
+  'camera': Icons.camera_alt_outlined,
+  'music': Icons.music_note_outlined,
+  'more': Icons.more_horiz,
+};
+
+String _iconToKey(IconData icon) {
+  for (final entry in _listIconMap.entries) {
+    if (entry.value == icon) {
+      return entry.key;
+    }
+  }
+
+  return 'list';
+}
+
+IconData _getListIcon(String key) {
+  return _listIconMap[key] ?? Icons.list_alt_outlined;
 }
