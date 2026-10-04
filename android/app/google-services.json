@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "322358613164",
+    "project_id": "lakwatsa-bbriones-app",
+    "storage_bucket": "lakwatsa-bbriones-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:322358613164:android:e76eed0122f7fe59d7bb09",
+        "android_client_info": {
+          "package_name": "com.bbriones.lakwatsa"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAFAXRK7hRRwxLDQB1tTM4ibliB19NYGZI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

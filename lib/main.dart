@@ -1,10 +1,18 @@
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
-import 'screens/lists/lists_screen.dart';
+import 'firebase_options.dart';
 import 'screens/main_screen.dart';
+import 'screens/auth/auth_gate.dart';
 import 'theme/app_theme.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+
   runApp(const LakwatsaApp());
 }
 
@@ -17,7 +25,7 @@ class LakwatsaApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'Lakwatsa',
       theme: AppTheme.light,
-      home: const MainScreen(),
+      home: AuthGate(),
     );
   }
 }

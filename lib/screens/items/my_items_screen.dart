@@ -1,10 +1,50 @@
 import 'package:flutter/material.dart';
 
+import '../../models/item.dart';
+import '../../repositories/firestore_item_repository.dart';
+import '../../services/auth_service.dart';
 import '../../theme/app_theme.dart';
 import 'add_item_screen.dart';
 
-class MyItemsScreen extends StatelessWidget {
+class MyItemsScreen extends StatefulWidget {
   const MyItemsScreen({super.key});
+
+  @override
+  State<MyItemsScreen> createState() => _MyItemsScreenState();
+}
+
+class _MyItemsScreenState extends State<MyItemsScreen> {
+  final TextEditingController searchController = TextEditingController();
+
+  FirestoreItemRepository? itemRepository;
+
+  String selectedCategory = 'All';
+
+  final List<String> categories = [
+    'All',
+    'Electronics',
+    'Documents',
+    'Clothing',
+    'Toiletries',
+    'Other',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+
+    final user = AuthService().currentUser;
+
+    if (user != null) {
+      itemRepository = FirestoreItemRepository(userId: user.uid);
+    }
+  }
+
+  @override
+  void dispose() {
+    searchController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -14,25 +54,147 @@ class MyItemsScreen extends StatelessWidget {
         Column(
           children: [
             const _StatusBar(),
-            const _Header(),
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.only(bottom: 20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: const [
-                    _SearchBar(),
-                    _CategoryChips(),
-                    _ElectronicsSection(),
-                    _DocumentsSection(),
-                  ],
-                ),
-              ),
-            ),
+
+            _Header(onAdd: _openAddItem),
+
+            Expanded(child: _buildContent()),
           ],
         ),
       ],
     );
+  }
+
+  Widget _buildContent() {
+    if (itemRepository == null) {
+      return Center(
+        child: Text('Please sign in again.', style: AppTextStyles.body),
+      );
+    }
+
+    return StreamBuilder<List<Item>>(
+      stream: itemRepository!.watchItems(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Text(
+                'Failed to load items.\n${snapshot.error}',
+                textAlign: TextAlign.center,
+                style: AppTextStyles.body,
+              ),
+            ),
+          );
+        }
+
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        final allItems = snapshot.data ?? [];
+
+        final filteredItems = _filterItems(allItems);
+
+        return ListView(
+          padding: const EdgeInsets.only(bottom: 24),
+          children: [
+            _SearchBar(
+              controller: searchController,
+              onChanged: (_) {
+                setState(() {});
+              },
+            ),
+
+            _CategoryChips(
+              categories: categories,
+              selectedCategory: selectedCategory,
+              onSelected: (category) {
+                setState(() {
+                  selectedCategory = category;
+                });
+              },
+            ),
+
+            const SizedBox(height: 12),
+
+            if (allItems.isEmpty)
+              const _EmptyState(
+                title: 'No items yet',
+                message: 'Add your first item to My Items.',
+              )
+            else if (filteredItems.isEmpty)
+              const _EmptyState(
+                title: 'No items found',
+                message: 'Try another search or category.',
+              )
+            else
+              ..._buildSections(filteredItems),
+          ],
+        );
+      },
+    );
+  }
+
+  List<Item> _filterItems(List<Item> items) {
+    final search = searchController.text.trim().toLowerCase();
+
+    return items.where((item) {
+      final matchesSearch =
+          search.isEmpty || item.name.toLowerCase().contains(search);
+
+      final matchesCategory =
+          selectedCategory == 'All' || item.category == selectedCategory;
+
+      return matchesSearch && matchesCategory;
+    }).toList();
+  }
+
+  List<Widget> _buildSections(List<Item> items) {
+    final Map<String, List<Item>> groupedItems = {};
+
+    for (final item in items) {
+      groupedItems.putIfAbsent(item.category, () => []);
+
+      groupedItems[item.category]!.add(item);
+    }
+
+    final widgets = <Widget>[];
+
+    for (final category in categories) {
+      if (category == 'All') {
+        continue;
+      }
+
+      final categoryItems = groupedItems[category];
+
+      if (categoryItems == null || categoryItems.isEmpty) {
+        continue;
+      }
+
+      widgets.add(_ItemSection(title: category, items: categoryItems));
+    }
+
+    // Handles categories that may exist in Firestore
+    // but are not currently in our category list.
+    for (final entry in groupedItems.entries) {
+      if (categories.contains(entry.key)) {
+        continue;
+      }
+
+      widgets.add(_ItemSection(title: entry.key, items: entry.value));
+    }
+
+    return widgets;
+  }
+
+  Future<void> _openAddItem() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const AddItemScreen()),
+    );
+
+    // No manual refresh needed.
+    // Firestore StreamBuilder updates automatically.
   }
 }
 
@@ -92,7 +254,9 @@ class _StatusBar extends StatelessWidget {
 }
 
 class _Header extends StatelessWidget {
-  const _Header();
+  final VoidCallback onAdd;
+
+  const _Header({required this.onAdd});
 
   @override
   Widget build(BuildContext context) {
@@ -106,19 +270,14 @@ class _Header extends StatelessWidget {
       child: Row(
         children: [
           Text('My Items', style: AppTextStyles.heading),
+
           const Spacer(),
+
           _HeaderButton(text: 'Q', filled: false, onTap: () {}),
+
           const SizedBox(width: 10),
-          _HeaderButton(
-            text: '+',
-            filled: true,
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const AddItemScreen()),
-              );
-            },
-          ),
+
+          _HeaderButton(text: '+', filled: true, onTap: onAdd),
         ],
       ),
     );
@@ -165,13 +324,15 @@ class _HeaderButton extends StatelessWidget {
 }
 
 class _SearchBar extends StatelessWidget {
-  const _SearchBar();
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
+
+  const _SearchBar({required this.controller, required this.onChanged});
 
   @override
   Widget build(BuildContext context) {
     return Container(
       margin: const EdgeInsets.fromLTRB(20, 12, 20, 12),
-      height: 44,
       decoration: BoxDecoration(
         color: AppColors.background,
         border: Border.all(color: AppColors.ink, width: 2),
@@ -180,39 +341,58 @@ class _SearchBar extends StatelessWidget {
           BoxShadow(color: AppColors.ink, offset: Offset(3, 3)),
         ],
       ),
-      alignment: Alignment.centerLeft,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Text(
-        'Search items...',
+      child: TextField(
+        controller: controller,
+        onChanged: onChanged,
         style: AppTextStyles.body.copyWith(fontSize: 13),
+        decoration: InputDecoration(
+          hintText: 'Search items...',
+          hintStyle: AppTextStyles.body.copyWith(
+            fontSize: 13,
+            color: AppColors.muted,
+          ),
+          prefixIcon: const Icon(Icons.search, color: AppColors.ink, size: 20),
+          border: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(vertical: 13),
+        ),
       ),
     );
   }
 }
 
 class _CategoryChips extends StatelessWidget {
-  const _CategoryChips();
+  final List<String> categories;
+  final String selectedCategory;
+  final ValueChanged<String> onSelected;
+
+  const _CategoryChips({
+    required this.categories,
+    required this.selectedCategory,
+    required this.onSelected,
+  });
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 28,
-      child: SingleChildScrollView(
+      height: 32,
+      child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.only(left: 20),
-        child: Row(
-          children: const [
-            _CategoryChip(text: 'All', selected: true, width: 44),
-            SizedBox(width: 8),
-            _CategoryChip(text: 'Electronics', width: 108),
-            SizedBox(width: 8),
-            _CategoryChip(text: 'Documents', width: 92),
-            SizedBox(width: 8),
-            _CategoryChip(text: 'Clothing', width: 84),
-            SizedBox(width: 8),
-            _CategoryChip(text: 'Toiletries', width: 100),
-          ],
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        itemCount: categories.length,
+        separatorBuilder: (_, __) {
+          return const SizedBox(width: 8);
+        },
+        itemBuilder: (context, index) {
+          final category = categories[index];
+
+          return _CategoryChip(
+            text: category,
+            selected: selectedCategory == category,
+            onTap: () {
+              onSelected(category);
+            },
+          );
+        },
       ),
     );
   }
@@ -221,94 +401,33 @@ class _CategoryChips extends StatelessWidget {
 class _CategoryChip extends StatelessWidget {
   final String text;
   final bool selected;
-  final double width;
+  final VoidCallback onTap;
 
   const _CategoryChip({
     required this.text,
-    this.selected = false,
-    required this.width,
+    required this.selected,
+    required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: width,
-      height: 28,
-      decoration: BoxDecoration(
-        color: selected ? AppColors.ink : AppColors.background,
-        border: Border.all(color: AppColors.ink, width: 2),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      alignment: Alignment.center,
-      child: Text(
-        text,
-        style: AppTextStyles.bodyBold.copyWith(
-          fontSize: 11,
-          color: selected ? AppColors.background : AppColors.ink,
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        decoration: BoxDecoration(
+          color: selected ? AppColors.ink : AppColors.background,
+          border: Border.all(color: AppColors.ink, width: 2),
+          borderRadius: BorderRadius.circular(14),
         ),
-      ),
-    );
-  }
-}
-
-class _ElectronicsSection extends StatelessWidget {
-  const _ElectronicsSection();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.only(top: 16),
-      child: _ItemSection(
-        title: 'Electronics',
-        count: '2 items',
-        items: [
-          _ItemData(
-            name: 'MacBook Pro',
-            category: 'Electronics',
-            hasQr: true,
-            qrColor: AppColors.green,
-            stripeColor: AppColors.orange,
+        alignment: Alignment.center,
+        child: Text(
+          text,
+          style: AppTextStyles.bodyBold.copyWith(
+            fontSize: 11,
+            color: selected ? AppColors.background : AppColors.ink,
           ),
-          _ItemData(
-            name: 'USB-C Charger',
-            category: 'Electronics',
-            hasQr: true,
-            qrColor: AppColors.card,
-            stripeColor: AppColors.orange,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _DocumentsSection extends StatelessWidget {
-  const _DocumentsSection();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.only(top: 16),
-      child: _ItemSection(
-        title: 'Documents',
-        count: '2 items',
-        items: [
-          _ItemData(
-            name: 'Passport',
-            category: 'Documents',
-            hasQr: true,
-            qrColor: AppColors.card,
-            stripeColor: AppColors.orange,
-            statusColor: Color(0xFFC44A4A),
-          ),
-          _ItemData(
-            name: 'National ID',
-            category: 'Documents',
-            hasQr: false,
-            qrColor: AppColors.card,
-            stripeColor: AppColors.muted,
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -316,19 +435,14 @@ class _DocumentsSection extends StatelessWidget {
 
 class _ItemSection extends StatelessWidget {
   final String title;
-  final String count;
-  final List<_ItemData> items;
+  final List<Item> items;
 
-  const _ItemSection({
-    required this.title,
-    required this.count,
-    required this.items,
-  });
+  const _ItemSection({required this.title, required this.items});
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -341,99 +455,130 @@ class _ItemSection extends StatelessWidget {
                   fontSize: 7,
                 ),
               ),
+
               const Spacer(),
-              Text(count, style: AppTextStyles.body.copyWith(fontSize: 11)),
+
+              Text(
+                '${items.length} '
+                '${items.length == 1 ? 'item' : 'items'}',
+                style: AppTextStyles.body.copyWith(fontSize: 11),
+              ),
             ],
           ),
+
           const SizedBox(height: 7),
+
           Container(height: 1, color: AppColors.ink),
+
           const SizedBox(height: 10),
-          ...items.map(
-            (item) => Padding(
+
+          ...items.map((item) {
+            return Padding(
               padding: const EdgeInsets.only(bottom: 10),
-              child: _ItemCard(item: item),
-            ),
-          ),
+              child: _ItemCard(
+                item: item,
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) {
+                        return AddItemScreen(item: item);
+                      },
+                    ),
+                  );
+                },
+              ),
+            );
+          }),
         ],
       ),
     );
   }
 }
 
-class _ItemData {
-  final String name;
-  final String category;
-  final bool hasQr;
-  final Color qrColor;
-  final Color stripeColor;
-  final Color? statusColor;
-
-  const _ItemData({
-    required this.name,
-    required this.category,
-    required this.hasQr,
-    required this.qrColor,
-    required this.stripeColor,
-    this.statusColor,
-  });
-}
-
 class _ItemCard extends StatelessWidget {
-  final _ItemData item;
+  final Item item;
+  final VoidCallback onTap;
 
-  const _ItemCard({required this.item});
+  const _ItemCard({required this.item, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 72,
-      decoration: BoxDecoration(
-        color: AppColors.background,
-        border: Border.all(color: AppColors.ink, width: 2.5),
-        borderRadius: BorderRadius.circular(4),
-        boxShadow: const [
-          BoxShadow(color: AppColors.ink, offset: Offset(4, 4)),
-        ],
-      ),
-      child: Stack(
-        children: [
-          Positioned(
-            left: 10,
-            top: 4,
-            child: Container(
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        height: 76,
+        decoration: BoxDecoration(
+          color: AppColors.background,
+          border: Border.all(color: AppColors.ink, width: 2.5),
+          borderRadius: BorderRadius.circular(4),
+          boxShadow: const [
+            BoxShadow(color: AppColors.ink, offset: Offset(4, 4)),
+          ],
+        ),
+        child: Row(
+          children: [
+            const SizedBox(width: 10),
+
+            Container(
               width: 4,
               height: 64,
               decoration: BoxDecoration(
-                color: item.stripeColor,
+                color: item.hasQr ? AppColors.orange : AppColors.muted,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
-          ),
-          Positioned(
-            left: 22,
-            top: 11,
-            child: Text(item.name, style: AppTextStyles.bodyBold),
-          ),
-          Positioned(
-            left: 22,
-            top: 31,
-            child: Text(
-              item.category,
-              style: AppTextStyles.body.copyWith(fontSize: 11),
+
+            const SizedBox(width: 10),
+
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: AppColors.card,
+                border: Border.all(color: AppColors.ink, width: 1.5),
+                borderRadius: BorderRadius.circular(3),
+              ),
+              alignment: Alignment.center,
+              child: Icon(
+                _getItemIcon(item.icon),
+                color: AppColors.ink,
+                size: 23,
+              ),
             ),
-          ),
-          Positioned(
-            right: 16,
-            top: 11,
-            child: Container(
-              width: 38,
-              height: 20,
+
+            const SizedBox(width: 12),
+
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTextStyles.bodyBold.copyWith(fontSize: 14),
+                  ),
+
+                  const SizedBox(height: 4),
+
+                  Text(
+                    '${item.category} • Qty ${item.quantity}',
+                    style: AppTextStyles.body.copyWith(fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+
+            Container(
+              margin: const EdgeInsets.only(right: 14),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
               decoration: BoxDecoration(
                 color: item.hasQr ? AppColors.green : AppColors.card,
                 border: Border.all(color: AppColors.ink, width: 1.5),
                 borderRadius: BorderRadius.circular(2),
               ),
-              alignment: Alignment.center,
               child: Text(
                 item.hasQr ? 'QR' : 'NO QR',
                 style: AppTextStyles.pixelDark.copyWith(
@@ -442,7 +587,79 @@ class _ItemCard extends StatelessWidget {
                 ),
               ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  IconData _getItemIcon(String icon) {
+    switch (icon) {
+      case 'electronics':
+        return Icons.devices_outlined;
+
+      case 'documents':
+        return Icons.description_outlined;
+
+      case 'clothing':
+        return Icons.checkroom_outlined;
+
+      case 'toiletries':
+        return Icons.cleaning_services_outlined;
+
+      case 'laptop':
+        return Icons.laptop_mac;
+
+      case 'charger':
+        return Icons.battery_charging_full;
+
+      case 'battery':
+        return Icons.battery_5_bar;
+
+      case 'passport':
+        return Icons.badge_outlined;
+
+      case 'id':
+        return Icons.credit_card;
+
+      case 'jacket':
+      case 'shirt':
+        return Icons.checkroom;
+
+      case 'toothbrush':
+        return Icons.cleaning_services_outlined;
+
+      default:
+        return Icons.inventory_2_outlined;
+    }
+  }
+}
+
+class _EmptyState extends StatelessWidget {
+  final String title;
+  final String message;
+
+  const _EmptyState({required this.title, required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 100, left: 30, right: 30),
+      child: Column(
+        children: [
+          const Icon(
+            Icons.inventory_2_outlined,
+            size: 48,
+            color: AppColors.muted,
           ),
+
+          const SizedBox(height: 14),
+
+          Text(title, style: AppTextStyles.bodyBold.copyWith(fontSize: 16)),
+
+          const SizedBox(height: 5),
+
+          Text(message, textAlign: TextAlign.center, style: AppTextStyles.body),
         ],
       ),
     );
