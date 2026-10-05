@@ -1,0 +1,253 @@
+rules_version = '2';
+// Lakwatsa Phase 1D. Test against the emulator before publishing.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function owner(uid) { return request.auth != null && request.auth.uid == uid; }
+
+    // Current app uses /users/{uid}/... and uppercase Activity statuses.
+    function activityPath(uid, activityId) {
+      return /databases/$(database)/documents/users/$(uid)/activities/$(activityId);
+    }
+    function checkPath(uid, activityId, checkId) {
+      return /databases/$(database)/documents/users/$(uid)/activities/$(activityId)/checks/$(checkId);
+    }
+    function beforeOrReturnCheck(checkId) {
+      return checkId == 'before_activity' || checkId == 'return';
+    }
+    function fromStatus(checkId) {
+      return checkId == 'before_activity' ? 'UPCOMING' : 'ACTIVE';
+    }
+    function toStatus(checkId) {
+      return checkId == 'before_activity' ? 'ACTIVE' : 'COMPLETED';
+    }
+    function checkType(checkId) {
+      return checkId == 'before_activity' ? 'BEFORE_ACTIVITY' : 'RETURN';
+    }
+    function transitionsWithCheck(uid, activityId, checkId) {
+      return beforeOrReturnCheck(checkId)
+        && get(activityPath(uid, activityId)).data.status == fromStatus(checkId)
+        && getAfter(activityPath(uid, activityId)).data.status == toStatus(checkId);
+    }
+    function validActivityDocument(d) {
+      return d.keys().hasAll([
+          'listId', 'name', 'type', 'activityDate', 'startAt', 'endAt',
+          'reminderEnabled', 'reminderMinutes', 'status', 'createdAt', 'updatedAt'
+        ])
+        && d.keys().hasOnly([
+          'listId', 'name', 'type', 'activityDate', 'startAt', 'endAt',
+          'reminderEnabled', 'reminderMinutes', 'status', 'createdAt', 'updatedAt'
+        ])
+        && d.listId is string && d.name is string
+        && d.name.size() > 0 && d.name.size() <= 100
+        && d.type is string && d.type.size() > 0 && d.type.size() <= 60
+        && d.activityDate is timestamp && d.startAt is timestamp
+        && d.endAt is timestamp && d.endAt > d.startAt
+        && d.reminderEnabled is bool
+        && d.reminderMinutes is int
+        && d.reminderMinutes >= 0 && d.reminderMinutes <= 1440
+        && d.status in ['UPCOMING', 'ACTIVE', 'COMPLETED']
+        && d.createdAt is timestamp && d.updatedAt is timestamp;
+    }
+    function metadataOnly() {
+      return request.resource.data.status == resource.data.status
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'listId', 'name', 'type', 'activityDate', 'startAt', 'endAt',
+          'reminderEnabled', 'reminderMinutes', 'updatedAt'
+        ]);
+    }
+    function completesCheck(uid, activityId, checkId) {
+      return beforeOrReturnCheck(checkId)
+        && resource.data.status == fromStatus(checkId)
+        && request.resource.data.status == toStatus(checkId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+        && getAfter(checkPath(uid, activityId, checkId)).data.type == checkType(checkId)
+        && getAfter(checkPath(uid, activityId, checkId)).data.status == 'COMPLETED';
+    }
+    function validActivityItem(d, itemId) {
+      return d.keys().hasAll([
+          'itemId', 'itemName', 'category', 'quantity', 'icon',
+          'photoUrl', 'qrCode', 'addedDuringActivity', 'createdAt'
+        ])
+        && d.keys().hasOnly([
+          'itemId', 'itemName', 'category', 'quantity', 'icon',
+          'photoUrl', 'qrCode', 'addedDuringActivity', 'createdAt'
+        ])
+        && d.itemId == itemId
+        && d.itemName is string && d.itemName.size() > 0 && d.itemName.size() <= 100
+        && d.category is string && d.icon is string
+        && d.quantity is int && d.quantity >= 1 && d.quantity <= 999
+        && (d.photoUrl == null || d.photoUrl is string)
+        && (d.qrCode == null || d.qrCode is string)
+        && d.addedDuringActivity is bool && d.createdAt is timestamp;
+    }
+    function validDraft(d, checkId) {
+      return d.keys().hasOnly([
+          'type', 'checkType', 'status', 'startedAt', 'foundMethods', 'updatedAt'
+        ])
+        && d.keys().hasAll([
+          'type', 'checkType', 'status', 'startedAt', 'foundMethods', 'updatedAt'
+        ])
+        && d.type == 'DRAFT' && d.status == 'IN_PROGRESS'
+        && d.startedAt is timestamp && d.updatedAt is timestamp
+        && d.foundMethods is map && d.foundMethods.size() <= 200
+        && d.foundMethods.values().hasOnly(['MANUAL', 'QR'])
+        && ((checkId == 'draft_before_activity' && d.checkType == 'BEFORE_ACTIVITY')
+          || (checkId == 'draft_return' && d.checkType == 'RETURN'));
+    }
+    function draftStatusMatches(uid, activityId, checkId) {
+      return (checkId == 'draft_before_activity'
+          && getAfter(activityPath(uid, activityId)).data.status == 'UPCOMING')
+        || (checkId == 'draft_return'
+          && getAfter(activityPath(uid, activityId)).data.status == 'ACTIVE');
+    }
+    function draftClearedByCompletion(uid, activityId, checkId) {
+      return (checkId == 'draft_before_activity'
+          && transitionsWithCheck(uid, activityId, 'before_activity'))
+        || (checkId == 'draft_return'
+          && transitionsWithCheck(uid, activityId, 'return'));
+    }
+    function validCompletedCheck(d, checkId) {
+      return beforeOrReturnCheck(checkId)
+        && d.keys().hasOnly(['type', 'startedAt', 'completedAt', 'status'])
+        && d.keys().hasAll(['type', 'startedAt', 'completedAt', 'status'])
+        && d.type == checkType(checkId) && d.status == 'COMPLETED'
+        && d.startedAt is timestamp && d.completedAt is timestamp
+        && d.completedAt >= d.startedAt;
+    }
+    function validCompletedCheckItem(d, itemId) {
+      return d.keys().hasOnly(['activityItemId', 'status', 'method', 'checkedAt'])
+        && d.keys().hasAll(['activityItemId', 'status', 'method', 'checkedAt'])
+        && d.activityItemId == itemId
+        && ((d.status == 'FOUND'
+          && d.method in ['MANUAL', 'QR'] && d.checkedAt is timestamp)
+        || (d.status == 'NOT_FOUND'
+          && d.method == null && d.checkedAt == null));
+    }
+
+    match /users/{uid} {
+      allow read, write: if owner(uid);
+      match /items/{itemId} {
+        // Preserve existing Item create/edit/delete behavior.
+        allow read, write: if owner(uid);
+      }
+      match /lists/{listId} {
+        // Preserve existing List create/edit/delete behavior.
+        allow read, write: if owner(uid);
+        match /items/{itemId} {
+          allow read, write: if owner(uid);
+        }
+      }
+      match /activities/{activityId} {
+        allow read: if owner(uid);
+        allow create: if owner(uid)
+          && validActivityDocument(request.resource.data)
+          && request.resource.data.status == 'UPCOMING';
+        allow update: if owner(uid) && validActivityDocument(request.resource.data)
+          && ( (resource.data.status in ['UPCOMING', 'ACTIVE'] && metadataOnly())
+            || completesCheck(uid, activityId, 'before_activity')
+            || completesCheck(uid, activityId, 'return'));
+        // App deletion currently deletes only the parent and leaves subcollections.
+        // Do not enable until a safe recursive cleanup flow exists.
+        allow delete: if false;
+        match /items/{itemId} {
+          allow read: if owner(uid);
+          // getAfter allows initial Activity+Items batch creation.
+          allow create: if owner(uid) && validActivityItem(request.resource.data, itemId)
+            && getAfter(activityPath(uid, activityId)).data.status in ['UPCOMING', 'ACTIVE'];
+          // Current Flutter app only adds Activity Items; it does not edit/remove them.
+          allow update, delete: if false;
+        }
+        match /checks/{checkId} {
+          allow read: if owner(uid);
+          allow create: if owner(uid)
+            && ((validDraft(request.resource.data, checkId)
+                && draftStatusMatches(uid, activityId, checkId))
+              || (validCompletedCheck(request.resource.data, checkId)
+                && transitionsWithCheck(uid, activityId, checkId)));
+          allow update: if owner(uid)
+            && checkId in ['draft_before_activity', 'draft_return']
+            && validDraft(request.resource.data, checkId)
+            && draftStatusMatches(uid, activityId, checkId);
+          // A draft can be removed only as part of a status transition.
+          allow delete: if owner(uid) && draftClearedByCompletion(uid, activityId, checkId);
+          match /items/{itemId} {
+            allow read: if owner(uid);
+            allow create: if owner(uid) && beforeOrReturnCheck(checkId)
+              && validCompletedCheckItem(request.resource.data, itemId)
+              && transitionsWithCheck(uid, activityId, checkId)
+              && getAfter(checkPath(uid, activityId, checkId)).data.type == checkType(checkId);
+            allow update, delete: if false;
+          }
+        }
+      }
+    }
+
+    // Compatibility: original v2 schema and rules (unchanged).
+    function named(d) { return d.name is string && d.name.size() > 0 && d.name.size() <= 100; }
+    function validItem(d) {
+      return d.keys().hasOnly(['name','category','quantity','archived']) && named(d)
+        && d.category in ['Electronics','Documents','Clothing','Personal Care','Other']
+        && d.quantity is int && d.quantity >= 1 && d.quantity <= 999 && d.archived is bool;
+    }
+    function validList(d) {
+      return d.keys().hasOnly(['name','quantities']) && named(d)
+        && d.quantities is map && d.quantities.size() <= 200;
+    }
+    function validActivity(d) {
+      return d.keys().hasOnly(['name','type','status','startsAt','endsAt','reminderMinutes','items','before','returned','draft','draftStartedAt','reminderUpdatedAt'])
+        && named(d) && d.type in ['Trip','School','Work','Daily','Other']
+        && d.status in ['planned','active','completed','cancelled']
+        && d.startsAt is string && d.endsAt is string && d.endsAt > d.startsAt
+        && d.reminderMinutes is int && d.reminderMinutes >= 0 && d.reminderMinutes <= 1440
+        && d.items is map && d.items.size() > 0 && d.items.size() <= 200
+        && d.draft is map && d.draft.keys().hasOnly(d.items.keys())
+        && d.draft.values().hasOnly(['manual','qr']);
+    }
+    function validCheck(c, d) {
+      return c is map && c.keys().hasOnly(['startedAt','completedAt','itemIds','found'])
+        && c.startedAt is string && c.completedAt is string
+        && c.itemIds is list && c.itemIds.toSet() == d.items.keys().toSet()
+        && c.found is map && c.found == resource.data.draft;
+    }
+    match /lakwatsa_v2_users/{uid}/items/{id} {
+      allow read: if owner(uid);
+      allow create, update: if owner(uid) && validItem(request.resource.data);
+      allow delete: if false;
+    }
+    match /lakwatsa_v2_users/{uid}/lists/{id} {
+      allow read, delete: if owner(uid);
+      allow create, update: if owner(uid) && validList(request.resource.data);
+    }
+    match /lakwatsa_v2_users/{uid}/activities/{id} {
+      allow read: if owner(uid);
+      allow create: if owner(uid) && validActivity(request.resource.data)
+        && request.resource.data.status == 'planned'
+        && request.resource.data.before == null && request.resource.data.returned == null
+        && request.resource.data.draft.size() == 0 && request.resource.data.draftStartedAt == null;
+      allow update: if owner(uid) && validActivity(request.resource.data)
+        && resource.data.status in ['planned','active']
+        && request.resource.data.name == resource.data.name
+        && request.resource.data.type == resource.data.type
+        && request.resource.data.startsAt == resource.data.startsAt
+        && request.resource.data.items.diff(resource.data.items).changedKeys().size() == 0
+        && request.resource.data.items.diff(resource.data.items).removedKeys().size() == 0
+        && (
+          (request.resource.data.status == resource.data.status
+            && request.resource.data.before == resource.data.before
+            && request.resource.data.returned == resource.data.returned)
+          || (request.resource.data.status == 'cancelled'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']))
+          || (resource.data.status == 'planned' && request.resource.data.status == 'active'
+            && validCheck(request.resource.data.before, resource.data)
+            && request.resource.data.returned == null && request.resource.data.draft.size() == 0
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','before','draft','draftStartedAt']))
+          || (resource.data.status == 'active' && request.resource.data.status == 'completed'
+            && validCheck(request.resource.data.returned, resource.data)
+            && request.resource.data.before == resource.data.before && request.resource.data.draft.size() == 0
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','returned','draft','draftStartedAt']))
+        );
+      allow delete: if false;
+    }
+  }
+}

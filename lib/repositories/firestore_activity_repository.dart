@@ -164,7 +164,7 @@ class FirestoreActivityRepository implements ActivityRepository {
   }) async {
     final activityDocument = _activitiesCollection.doc(activityId);
 
-    final checkDocument = activityDocument.collection('checks').doc();
+    final checkDocument = activityDocument.collection('checks').doc('return');
 
     final now = DateTime.now();
     await firestore.runTransaction((transaction) async {
@@ -187,7 +187,9 @@ class FirestoreActivityRepository implements ActivityRepository {
         final method = foundMethods[item.id];
         final isFound = method != null;
 
-        final checkItemDocument = checkDocument.collection('items').doc(item.id);
+        final checkItemDocument = checkDocument
+            .collection('items')
+            .doc(item.id);
 
         transaction.set(checkItemDocument, {
           'activityItemId': item.id,
@@ -202,7 +204,9 @@ class FirestoreActivityRepository implements ActivityRepository {
         'updatedAt': Timestamp.fromDate(now),
       });
 
-      transaction.delete(_draftDocument(activityId: activityId, checkType: 'RETURN'));
+      transaction.delete(
+        _draftDocument(activityId: activityId, checkType: 'RETURN'),
+      );
     });
   }
 
@@ -215,7 +219,9 @@ class FirestoreActivityRepository implements ActivityRepository {
   }) async {
     final activityDocument = _activitiesCollection.doc(activityId);
 
-    final checkDocument = activityDocument.collection('checks').doc();
+    final checkDocument = activityDocument
+        .collection('checks')
+        .doc('before_activity');
 
     final now = DateTime.now();
 
@@ -240,7 +246,9 @@ class FirestoreActivityRepository implements ActivityRepository {
 
         final isFound = method != null;
 
-        final checkItemDocument = checkDocument.collection('items').doc(item.id);
+        final checkItemDocument = checkDocument
+            .collection('items')
+            .doc(item.id);
 
         transaction.set(checkItemDocument, {
           'activityItemId': item.id,
