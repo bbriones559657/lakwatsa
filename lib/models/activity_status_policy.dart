@@ -33,6 +33,48 @@ class ActivityStatusPolicy {
     }
   }
 
+  static bool addedDuringActivityFor(String? current) {
+    requireEditable(current);
+    return current == 'ACTIVE';
+  }
+
+  static void requireItemRemoval(String? current) {
+    _require(current, 'UPCOMING', 'remove Items from the Activity');
+  }
+
+  static void requireItemCountForRemoval(int itemCount) {
+    if (itemCount <= 1) {
+      throw StateError(
+        'Cannot remove the last Item from an Activity.',
+      );
+    }
+  }
+
+  static void requireItemSnapshotForCheck({
+    required int currentCount,
+    required int currentRevision,
+    required int submittedCount,
+    required int expectedRevision,
+  }) {
+    if (currentCount < 1 ||
+        currentRevision < 0 ||
+        submittedCount != currentCount ||
+        expectedRevision != currentRevision) {
+      throw StateError(
+        'Activity Items changed. Review the refreshed list and try again.',
+      );
+    }
+  }
+
+  static void requireMetadataEdit(String? current) {
+    if (current != 'UPCOMING' && current != 'ACTIVE') {
+      throw StateError(
+        'Cannot edit Activity details while the Activity is '
+        '${current ?? 'UNKNOWN'}.',
+      );
+    }
+  }
+
   static void _require(String? current, String expected, String action) {
     if (current != expected) {
       throw StateError(

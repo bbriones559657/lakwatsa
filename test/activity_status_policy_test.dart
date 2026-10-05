@@ -50,7 +50,29 @@ void main() {
     ActivityStatusPolicy.requireEditable('UPCOMING');
     ActivityStatusPolicy.requireEditable('ACTIVE');
     for (final status in ['COMPLETED', null]) {
-      expect(() => ActivityStatusPolicy.requireEditable(status), throwsStateError);
+      expect(
+        () => ActivityStatusPolicy.requireEditable(status),
+        throwsStateError,
+      );
+    }
+  });
+
+  test('Added-during-activity flag follows the Activity status', () {
+    expect(ActivityStatusPolicy.addedDuringActivityFor('UPCOMING'), isFalse);
+    expect(ActivityStatusPolicy.addedDuringActivityFor('ACTIVE'), isTrue);
+    expect(
+      () => ActivityStatusPolicy.addedDuringActivityFor('COMPLETED'),
+      throwsStateError,
+    );
+  });
+
+  test('Items can only be removed while the Activity is UPCOMING', () {
+    ActivityStatusPolicy.requireItemRemoval('UPCOMING');
+    for (final status in ['ACTIVE', 'COMPLETED', null]) {
+      expect(
+        () => ActivityStatusPolicy.requireItemRemoval(status),
+        throwsStateError,
+      );
     }
   });
 }

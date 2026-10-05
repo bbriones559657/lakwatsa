@@ -36,6 +36,16 @@ abstract class ActivityRepository {
     required Item item,
   });
 
+  Future<List<ActivityItem>> addItemsToActivity({
+    required String activityId,
+    required List<Item> items,
+  });
+
+  Future<void> removeItemFromActivity({
+    required String activityId,
+    required String itemId,
+  });
+
   Future<void> updateActivity(Activity activity);
 
   Future<void> deleteActivity(String activityId);
