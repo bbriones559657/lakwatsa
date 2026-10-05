@@ -123,7 +123,7 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
         }
 
         final lists = snapshot.data ?? [];
-        final createDisabled = isSaving ||
+        final createBlockedBySelection = isSaving ||
             lists.isEmpty ||
             selectedListId == null ||
             isLoadingSelectedList ||
@@ -332,31 +332,56 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
 
             const SizedBox(height: 28),
 
-            GestureDetector(
-              onTap: createDisabled ? null : _saveActivity,
-              child: Container(
-                height: 52,
-                decoration: BoxDecoration(
-                  color: createDisabled ? AppColors.muted : AppColors.ink,
-                  border: Border.all(color: AppColors.ink, width: 2),
-                  borderRadius: BorderRadius.circular(4),
-                  boxShadow: createDisabled
-                      ? null
-                      : const [
-                          BoxShadow(
-                            color: AppColors.green,
-                            offset: Offset(3, 3),
-                          ),
-                        ],
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  isSaving ? 'Creating...' : 'Create Activity',
-                  style: AppTextStyles.bodyBold.copyWith(
-                    color: AppColors.background,
+            ValueListenableBuilder<TextEditingValue>(
+              valueListenable: nameController,
+              builder: (context, nameValue, _) {
+                final activityName = nameValue.text.trim();
+                final startAt = DateTime(
+                  selectedDate.year,
+                  selectedDate.month,
+                  selectedDate.day,
+                  startTime.hour,
+                  startTime.minute,
+                );
+                final endAt = DateTime(
+                  selectedDate.year,
+                  selectedDate.month,
+                  selectedDate.day,
+                  endTime.hour,
+                  endTime.minute,
+                );
+                final createDisabled = createBlockedBySelection ||
+                    activityName.isEmpty ||
+                    activityName.length > 100 ||
+                    !endAt.isAfter(startAt);
+
+                return GestureDetector(
+                  onTap: createDisabled ? null : _saveActivity,
+                  child: Container(
+                    height: 52,
+                    decoration: BoxDecoration(
+                      color: createDisabled ? AppColors.muted : AppColors.ink,
+                      border: Border.all(color: AppColors.ink, width: 2),
+                      borderRadius: BorderRadius.circular(4),
+                      boxShadow: createDisabled
+                          ? null
+                          : const [
+                              BoxShadow(
+                                color: AppColors.green,
+                                offset: Offset(3, 3),
+                              ),
+                            ],
+                    ),
+                    alignment: Alignment.center,
+                    child: Text(
+                      isSaving ? 'Creating...' : 'Create Activity',
+                      style: AppTextStyles.bodyBold.copyWith(
+                        color: AppColors.background,
+                      ),
+                    ),
                   ),
-                ),
-              ),
+                );
+              },
             ),
           ],
         );

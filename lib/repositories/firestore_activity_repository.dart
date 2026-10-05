@@ -9,6 +9,13 @@ import '../models/activity_check_item.dart';
 import '../models/activity_check_draft.dart';
 import '../models/activity_status_policy.dart';
 
+class _ActivityItemState {
+  final int count;
+  final int revision;
+
+  const _ActivityItemState({required this.count, required this.revision});
+}
+
 class FirestoreActivityRepository implements ActivityRepository {
   final FirebaseFirestore firestore;
   final String userId;
@@ -162,9 +169,14 @@ class FirestoreActivityRepository implements ActivityRepository {
     required Map<String, String> foundMethods,
     required DateTime startedAt,
   }) async {
-    final activityDocument = _activitiesCollection.doc(activityId);
+    final expectedItemState = await _ensureActivityItemState(activityId);
+    _requireUniqueActivityItems(activityItems);
 
+    final activityDocument = _activitiesCollection.doc(activityId);
     final checkDocument = activityDocument.collection('checks').doc('return');
+    final itemDocuments = activityItems
+        .map((item) => _activityItemsCollection(activityId).doc(item.id))
+        .toList();
 
     final now = DateTime.now();
     await firestore.runTransaction((transaction) async {
@@ -172,21 +184,40 @@ class FirestoreActivityRepository implements ActivityRepository {
       if (!activitySnapshot.exists) {
         throw StateError('Activity no longer exists.');
       }
-      ActivityStatusPolicy.requireReturn(
-        activitySnapshot.data()?['status'] as String?,
+
+      final activityData = activitySnapshot.data();
+      ActivityStatusPolicy.requireReturn(activityData?['status'] as String?);
+
+      final currentItemState = _requireActivityItemState(activityData);
+      ActivityStatusPolicy.requireItemSnapshotForCheck(
+        currentCount: currentItemState.count,
+        currentRevision: currentItemState.revision,
+        submittedCount: activityItems.length,
+        expectedRevision: expectedItemState.revision,
       );
+
+      final itemSnapshots = <DocumentSnapshot<Map<String, dynamic>>>[];
+      for (final document in itemDocuments) {
+        itemSnapshots.add(await transaction.get(document));
+      }
+      if (itemSnapshots.any((snapshot) => !snapshot.exists)) {
+        throw StateError(
+          'Activity Items changed. Review the refreshed list and try again.',
+        );
+      }
 
       transaction.set(checkDocument, {
         'type': 'RETURN',
         'startedAt': Timestamp.fromDate(startedAt),
         'completedAt': Timestamp.fromDate(now),
         'status': 'COMPLETED',
+        'itemCount': currentItemState.count,
+        'itemRevision': currentItemState.revision,
       });
 
       for (final item in activityItems) {
         final method = foundMethods[item.id];
         final isFound = method != null;
-
         final checkItemDocument = checkDocument
             .collection('items')
             .doc(item.id);
@@ -217,11 +248,16 @@ class FirestoreActivityRepository implements ActivityRepository {
     required Map<String, String> foundMethods,
     required DateTime startedAt,
   }) async {
-    final activityDocument = _activitiesCollection.doc(activityId);
+    final expectedItemState = await _ensureActivityItemState(activityId);
+    _requireUniqueActivityItems(activityItems);
 
+    final activityDocument = _activitiesCollection.doc(activityId);
     final checkDocument = activityDocument
         .collection('checks')
         .doc('before_activity');
+    final itemDocuments = activityItems
+        .map((item) => _activityItemsCollection(activityId).doc(item.id))
+        .toList();
 
     final now = DateTime.now();
 
@@ -230,22 +266,40 @@ class FirestoreActivityRepository implements ActivityRepository {
       if (!activitySnapshot.exists) {
         throw StateError('Activity no longer exists.');
       }
-      ActivityStatusPolicy.requireBefore(
-        activitySnapshot.data()?['status'] as String?,
+
+      final activityData = activitySnapshot.data();
+      ActivityStatusPolicy.requireBefore(activityData?['status'] as String?);
+
+      final currentItemState = _requireActivityItemState(activityData);
+      ActivityStatusPolicy.requireItemSnapshotForCheck(
+        currentCount: currentItemState.count,
+        currentRevision: currentItemState.revision,
+        submittedCount: activityItems.length,
+        expectedRevision: expectedItemState.revision,
       );
+
+      final itemSnapshots = <DocumentSnapshot<Map<String, dynamic>>>[];
+      for (final document in itemDocuments) {
+        itemSnapshots.add(await transaction.get(document));
+      }
+      if (itemSnapshots.any((snapshot) => !snapshot.exists)) {
+        throw StateError(
+          'Activity Items changed. Review the refreshed list and try again.',
+        );
+      }
 
       transaction.set(checkDocument, {
         'type': 'BEFORE_ACTIVITY',
         'startedAt': Timestamp.fromDate(startedAt),
         'completedAt': Timestamp.fromDate(now),
         'status': 'COMPLETED',
+        'itemCount': currentItemState.count,
+        'itemRevision': currentItemState.revision,
       });
 
       for (final item in activityItems) {
         final method = foundMethods[item.id];
-
         final isFound = method != null;
-
         final checkItemDocument = checkDocument
             .collection('items')
             .doc(item.id);
@@ -258,8 +312,7 @@ class FirestoreActivityRepository implements ActivityRepository {
         });
       }
 
-      // The Activity only becomes ACTIVE
-      // after the before-check is finished.
+      // The Activity only becomes ACTIVE after the Before Check is finished.
       transaction.update(activityDocument, {
         'status': 'ACTIVE',
         'updatedAt': Timestamp.fromDate(now),
@@ -296,20 +349,9 @@ class FirestoreActivityRepository implements ActivityRepository {
 
   @override
   Future<Activity> addActivity(Activity activity) async {
-    ActivityStatusPolicy.requireNew(activity.status);
-    final document = _activitiesCollection.doc();
-
-    final now = DateTime.now();
-
-    final newActivity = activity.copyWith(
-      id: document.id,
-      createdAt: now,
-      updatedAt: now,
+    throw UnsupportedError(
+      'Activities must be created with at least one Item.',
     );
-
-    await document.set(_activityToMap(newActivity, now));
-
-    return newActivity;
   }
 
   @override
@@ -334,73 +376,87 @@ class FirestoreActivityRepository implements ActivityRepository {
       return const [];
     }
 
+    await _ensureActivityItemState(activityId);
+
     final uniqueItems = <String, Item>{
       for (final item in items) item.id: item,
     }.values.toList();
+    final results = <ActivityItem>[];
 
+    // Add one Item per transaction so Firestore Rules can tie every parent
+    // count/revision change to the exact child document being created.
+    for (final item in uniqueItems) {
+      results.add(
+        await _addSingleItemToActivity(
+          activityId: activityId,
+          item: item,
+        ),
+      );
+    }
+
+    return results;
+  }
+
+  Future<ActivityItem> _addSingleItemToActivity({
+    required String activityId,
+    required Item item,
+  }) async {
     final activityDocument = _activitiesCollection.doc(activityId);
-    final itemDocuments = uniqueItems
-        .map((item) => _activityItemsCollection(activityId).doc(item.id))
-        .toList();
+    final itemDocument = _activityItemsCollection(activityId).doc(item.id);
 
-    return firestore.runTransaction<List<ActivityItem>>((transaction) async {
-      // Firestore transactions require all reads before any writes.
+    return firestore.runTransaction<ActivityItem>((transaction) async {
       final activitySnapshot = await transaction.get(activityDocument);
+      final existingSnapshot = await transaction.get(itemDocument);
+
       if (!activitySnapshot.exists) {
         throw StateError('Activity no longer exists.');
       }
 
-      final status = activitySnapshot.data()?['status'] as String?;
+      final activityData = activitySnapshot.data();
+      final status = activityData?['status'] as String?;
       final addedDuringActivity =
           ActivityStatusPolicy.addedDuringActivityFor(status);
+      final currentItemState = _requireActivityItemState(activityData);
 
-      final existingSnapshots = <DocumentSnapshot<Map<String, dynamic>>>[];
-      for (final document in itemDocuments) {
-        existingSnapshots.add(await transaction.get(document));
+      if (existingSnapshot.exists) {
+        return _activityItemFromDocument(existingSnapshot);
+      }
+      if (currentItemState.count >= 200) {
+        throw StateError('An Activity can contain at most 200 Items.');
       }
 
       final now = DateTime.now();
-      final results = <ActivityItem>[];
+      transaction.set(itemDocument, {
+        'itemId': item.id,
+        'itemName': item.name,
+        'category': item.category,
+        'quantity': item.quantity,
+        'icon': item.icon,
+        'photoUrl': item.photoUrl,
+        'qrCode': item.qrCode,
+        'addedDuringActivity': addedDuringActivity,
+        'createdAt': Timestamp.fromDate(now),
+      });
+      transaction.update(activityDocument, {
+        'itemCount': currentItemState.count + 1,
+        'itemRevision': currentItemState.revision + 1,
+        'itemMutationId': item.id,
+        'itemMutationType': 'ADD',
+        'updatedAt': Timestamp.fromDate(now),
+      });
 
-      for (var index = 0; index < uniqueItems.length; index++) {
-        final item = uniqueItems[index];
-        final document = itemDocuments[index];
-        final existing = existingSnapshots[index];
-
-        if (existing.exists) {
-          results.add(_activityItemFromDocument(existing));
-          continue;
-        }
-
-        transaction.set(document, {
-          'itemId': item.id,
-          'itemName': item.name,
-          'category': item.category,
-          'quantity': item.quantity,
-          'icon': item.icon,
-          'photoUrl': item.photoUrl,
-          'qrCode': item.qrCode,
-          'addedDuringActivity': addedDuringActivity,
-          'createdAt': Timestamp.fromDate(now),
-        });
-
-        results.add(
-          ActivityItem(
-            id: item.id,
-            itemId: item.id,
-            itemName: item.name,
-            category: item.category,
-            quantity: item.quantity,
-            icon: item.icon,
-            photoUrl: item.photoUrl,
-            qrCode: item.qrCode,
-            addedDuringActivity: addedDuringActivity,
-            createdAt: now,
-          ),
-        );
-      }
-
-      return results;
+      return ActivityItem(
+        id: item.id,
+        itemId: item.id,
+        itemName: item.name,
+        category: item.category,
+        quantity: item.quantity,
+        icon: item.icon,
+        photoUrl: item.photoUrl,
+        qrCode: item.qrCode,
+        addedDuringActivity: addedDuringActivity,
+        createdAt: now,
+      );
     });
   }
 
@@ -409,6 +465,8 @@ class FirestoreActivityRepository implements ActivityRepository {
     required String activityId,
     required String itemId,
   }) async {
+    await _ensureActivityItemState(activityId);
+
     final activityDocument = _activitiesCollection.doc(activityId);
     final itemDocument = _activityItemsCollection(activityId).doc(itemId);
     final draftDocument = _draftDocument(
@@ -416,26 +474,25 @@ class FirestoreActivityRepository implements ActivityRepository {
       checkType: 'BEFORE_ACTIVITY',
     );
 
-    final itemCountSnapshot = await _activityItemsCollection(activityId)
-        .limit(2)
-        .get();
-
     await firestore.runTransaction((transaction) async {
       // Keep a partially completed Before draft consistent with item removal.
       final activitySnapshot = await transaction.get(activityDocument);
+      final itemSnapshot = await transaction.get(itemDocument);
       final draftSnapshot = await transaction.get(draftDocument);
 
       if (!activitySnapshot.exists) {
         throw StateError('Activity no longer exists.');
       }
+      if (!itemSnapshot.exists) {
+        throw StateError('Item is no longer part of this Activity.');
+      }
 
-      ActivityStatusPolicy.requireItemRemoval(
-        activitySnapshot.data()?['status'] as String?,
-      );
-      ActivityStatusPolicy.requireItemCountForRemoval(
-        itemCountSnapshot.docs.length,
-      );
+      final activityData = activitySnapshot.data();
+      ActivityStatusPolicy.requireItemRemoval(activityData?['status'] as String?);
+      final currentItemState = _requireActivityItemState(activityData);
+      ActivityStatusPolicy.requireItemCountForRemoval(currentItemState.count);
 
+      final now = DateTime.now();
       if (draftSnapshot.exists) {
         final draftData = draftSnapshot.data();
         final methods = <String, String>{};
@@ -454,11 +511,18 @@ class FirestoreActivityRepository implements ActivityRepository {
 
         transaction.update(draftDocument, {
           'foundMethods': methods,
-          'updatedAt': Timestamp.now(),
+          'updatedAt': Timestamp.fromDate(now),
         });
       }
 
       transaction.delete(itemDocument);
+      transaction.update(activityDocument, {
+        'itemCount': currentItemState.count - 1,
+        'itemRevision': currentItemState.revision + 1,
+        'itemMutationId': itemId,
+        'itemMutationType': 'REMOVE',
+        'updatedAt': Timestamp.fromDate(now),
+      });
     });
   }
 
@@ -468,10 +532,19 @@ class FirestoreActivityRepository implements ActivityRepository {
     required List<Item> items,
   }) async {
     ActivityStatusPolicy.requireNew(activity.status);
+
+    final uniqueItems = <String, Item>{
+      for (final item in items) item.id: item,
+    }.values.toList();
+    if (uniqueItems.isEmpty) {
+      throw StateError('An Activity must contain at least one Item.');
+    }
+    if (uniqueItems.length > 200) {
+      throw StateError('An Activity can contain at most 200 Items.');
+    }
+
     final activityDocument = _activitiesCollection.doc();
-
     final now = DateTime.now();
-
     final newActivity = activity.copyWith(
       id: activityDocument.id,
       createdAt: now,
@@ -479,10 +552,17 @@ class FirestoreActivityRepository implements ActivityRepository {
     );
 
     final batch = firestore.batch();
+    batch.set(
+      activityDocument,
+      _activityToMap(
+        newActivity,
+        now,
+        itemCount: uniqueItems.length,
+        itemRevision: 0,
+      ),
+    );
 
-    batch.set(activityDocument, _activityToMap(newActivity, now));
-
-    for (final item in items) {
+    for (final item in uniqueItems) {
       final itemDocument = activityDocument.collection('items').doc(item.id);
 
       batch.set(itemDocument, {
@@ -499,7 +579,6 @@ class FirestoreActivityRepository implements ActivityRepository {
     }
 
     await batch.commit();
-
     return newActivity;
   }
 
@@ -571,7 +650,89 @@ class FirestoreActivityRepository implements ActivityRepository {
     });
   }
 
-  Map<String, dynamic> _activityToMap(Activity activity, DateTime now) {
+  Future<_ActivityItemState> _ensureActivityItemState(
+    String activityId,
+  ) async {
+    final activityDocument = _activitiesCollection.doc(activityId);
+    final firstSnapshot = await activityDocument.get();
+    if (!firstSnapshot.exists) {
+      throw StateError('Activity no longer exists.');
+    }
+
+    final existingState = _activityItemStateFromData(firstSnapshot.data());
+    if (existingState != null) {
+      return existingState;
+    }
+
+    // Legacy Activities predate itemCount/itemRevision. New rules block Item
+    // mutations until this one-time state initialization is completed, so the
+    // collection count remains stable while it is measured.
+    final itemsSnapshot = await _activityItemsCollection(activityId).get();
+    final itemCount = itemsSnapshot.docs.length;
+    if (itemCount < 1) {
+      throw StateError('An Activity must contain at least one Item.');
+    }
+    if (itemCount > 200) {
+      throw StateError('An Activity can contain at most 200 Items.');
+    }
+
+    return firestore.runTransaction<_ActivityItemState>((transaction) async {
+      final activitySnapshot = await transaction.get(activityDocument);
+      if (!activitySnapshot.exists) {
+        throw StateError('Activity no longer exists.');
+      }
+
+      final activityData = activitySnapshot.data();
+      final concurrentState = _activityItemStateFromData(activityData);
+      if (concurrentState != null) {
+        return concurrentState;
+      }
+
+      ActivityStatusPolicy.requireEditable(activityData?['status'] as String?);
+      transaction.update(activityDocument, {
+        'itemCount': itemCount,
+        'itemRevision': 0,
+        'updatedAt': Timestamp.now(),
+      });
+
+      return _ActivityItemState(count: itemCount, revision: 0);
+    });
+  }
+
+  _ActivityItemState? _activityItemStateFromData(
+    Map<String, dynamic>? data,
+  ) {
+    final count = data?['itemCount'];
+    final revision = data?['itemRevision'];
+    if (count is int && revision is int) {
+      return _ActivityItemState(count: count, revision: revision);
+    }
+    return null;
+  }
+
+  _ActivityItemState _requireActivityItemState(Map<String, dynamic>? data) {
+    final state = _activityItemStateFromData(data);
+    if (state == null || state.count < 1 || state.revision < 0) {
+      throw StateError('Activity Item state is invalid. Reopen the Activity.');
+    }
+    return state;
+  }
+
+  void _requireUniqueActivityItems(List<ActivityItem> activityItems) {
+    final uniqueIds = activityItems.map((item) => item.id).toSet();
+    if (uniqueIds.length != activityItems.length) {
+      throw StateError(
+        'Activity Items changed. Review the refreshed list and try again.',
+      );
+    }
+  }
+
+  Map<String, dynamic> _activityToMap(
+    Activity activity,
+    DateTime now, {
+    required int itemCount,
+    required int itemRevision,
+  }) {
     return {
       'listId': activity.listId,
       'name': activity.name.trim(),
@@ -588,6 +749,10 @@ class FirestoreActivityRepository implements ActivityRepository {
       'reminderMinutes': activity.reminderMinutes,
 
       'status': activity.status,
+
+      'itemCount': itemCount,
+
+      'itemRevision': itemRevision,
 
       'createdAt': Timestamp.fromDate(activity.createdAt ?? now),
 

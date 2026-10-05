@@ -50,6 +50,22 @@ class ActivityStatusPolicy {
     }
   }
 
+  static void requireItemSnapshotForCheck({
+    required int currentCount,
+    required int currentRevision,
+    required int submittedCount,
+    required int expectedRevision,
+  }) {
+    if (currentCount < 1 ||
+        currentRevision < 0 ||
+        submittedCount != currentCount ||
+        expectedRevision != currentRevision) {
+      throw StateError(
+        'Activity Items changed. Review the refreshed list and try again.',
+      );
+    }
+  }
+
   static void requireMetadataEdit(String? current) {
     if (current != 'UPCOMING' && current != 'ACTIVE') {
       throw StateError(
