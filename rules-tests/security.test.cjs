@@ -158,3 +158,95 @@ test('v2 Item rules remain compatible, including owner-only access', async () =>
   await assertFails(deleteDoc(v2));
   await assertFails(getDoc(doc(client('bob'), 'lakwatsa_v2_users/alice/items/bottle')));
 });
+
+
+test('three-Item Activity preserves Before history when a fourth Item is added for Return', async () => {
+  const alice = client();
+  const firstItems = ['bottle', 'phone', 'keys'];
+  const initial = writeBatch(alice);
+  initial.set(activityRef(alice), activity());
+  for (const id of firstItems) {
+    initial.set(activityItemRef(alice, id), activityItem(id));
+  }
+  await assertSucceeds(initial.commit());
+
+  await assertSucceeds(setDoc(checkRef(alice, 'draft_before_activity'), {
+    ...draft(),
+    foundMethods: { bottle: 'MANUAL', phone: 'QR' },
+  }));
+
+  const before = writeBatch(alice);
+  before.set(checkRef(alice, 'before_activity'), completedCheck('BEFORE_ACTIVITY'));
+  for (const id of firstItems) {
+    before.set(checkItemRef(alice, 'before_activity', id),
+      id === 'keys'
+        ? { activityItemId: id, status: 'NOT_FOUND', method: null, checkedAt: null }
+        : { activityItemId: id, status: 'FOUND', method: id === 'phone' ? 'QR' : 'MANUAL', checkedAt: later });
+  }
+  before.update(activityRef(alice), { status: 'ACTIVE', updatedAt: later });
+  before.delete(checkRef(alice, 'draft_before_activity'));
+  await assertSucceeds(before.commit());
+
+  const savedBefore = await Promise.all(firstItems.map(id =>
+    getDoc(checkItemRef(alice, 'before_activity', id))));
+  assert.equal(savedBefore.length, 3);
+  assert.equal(savedBefore.filter(row => row.data().status === 'FOUND').length, 2);
+
+  await assertSucceeds(setDoc(activityItemRef(alice, 'charger'), activityItem('charger', true)));
+  const returnItems = [...firstItems, 'charger'];
+  await assertSucceeds(setDoc(checkRef(alice, 'draft_return'), {
+    ...draft('RETURN'),
+    foundMethods: Object.fromEntries(returnItems.map(id => [id, 'MANUAL'])),
+  }));
+
+  const returning = writeBatch(alice);
+  returning.set(checkRef(alice, 'return'), completedCheck('RETURN'));
+  for (const id of returnItems) {
+    returning.set(checkItemRef(alice, 'return', id), checkedItem(id));
+  }
+  returning.update(activityRef(alice), { status: 'COMPLETED', updatedAt: later });
+  returning.delete(checkRef(alice, 'draft_return'));
+  await assertSucceeds(returning.commit());
+
+  const persistedBefore = await Promise.all(firstItems.map(id =>
+    getDoc(checkItemRef(alice, 'before_activity', id))));
+  const persistedReturn = await Promise.all(returnItems.map(id =>
+    getDoc(checkItemRef(alice, 'return', id))));
+  assert.equal(persistedBefore.filter(row => row.data().status === 'FOUND').length, 2);
+  assert.equal(persistedBefore.length, 3);
+  assert.equal(persistedReturn.filter(row => row.data().status === 'FOUND').length, 4);
+  assert.equal(persistedReturn.length, 4);
+  assert.equal((await getDoc(activityRef(alice))).data().status, 'COMPLETED');
+});
+
+test('twelve-Item Activity can finish both checks atomically', async () => {
+  const alice = client();
+  const itemIds = Array.from({ length: 12 }, (_, index) => `item-${index + 1}`);
+  const initial = writeBatch(alice);
+  initial.set(activityRef(alice), activity());
+  for (const id of itemIds) {
+    initial.set(activityItemRef(alice, id), activityItem(id));
+  }
+  await assertSucceeds(initial.commit());
+
+  for (const [type, nextStatus, draftId, checkId] of [
+    ['BEFORE_ACTIVITY', 'ACTIVE', 'draft_before_activity', 'before_activity'],
+    ['RETURN', 'COMPLETED', 'draft_return', 'return'],
+  ]) {
+    await assertSucceeds(setDoc(checkRef(alice, draftId), {
+      ...draft(type),
+      foundMethods: Object.fromEntries(itemIds.map(id => [id, 'MANUAL'])),
+    }));
+    const save = writeBatch(alice);
+    save.set(checkRef(alice, checkId), completedCheck(type));
+    for (const id of itemIds) {
+      save.set(checkItemRef(alice, checkId, id), checkedItem(id));
+    }
+    save.update(activityRef(alice), { status: nextStatus, updatedAt: later });
+    save.delete(checkRef(alice, draftId));
+    await assertSucceeds(save.commit());
+    assert.equal((await getDoc(activityRef(alice))).data().status, nextStatus);
+    const rows = await Promise.all(itemIds.map(id => getDoc(checkItemRef(alice, checkId, id))));
+    assert.equal(rows.filter(row => row.exists()).length, 12);
+  }
+});
