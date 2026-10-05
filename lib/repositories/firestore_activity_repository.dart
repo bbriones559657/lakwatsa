@@ -6,6 +6,8 @@ import '../models/activity_item.dart';
 import 'activity_repository.dart';
 import '../models/activity_check.dart';
 import '../models/activity_check_item.dart';
+import '../models/activity_check_draft.dart';
+import '../models/activity_status_policy.dart';
 
 class FirestoreActivityRepository implements ActivityRepository {
   final FirebaseFirestore firestore;
@@ -18,6 +20,87 @@ class FirestoreActivityRepository implements ActivityRepository {
 
   CollectionReference<Map<String, dynamic>> get _activitiesCollection {
     return firestore.collection('users').doc(userId).collection('activities');
+  }
+
+  DocumentReference<Map<String, dynamic>> _draftDocument({
+    required String activityId,
+    required String checkType,
+  }) {
+    final draftId = switch (checkType) {
+      'BEFORE_ACTIVITY' => 'draft_before_activity',
+      'RETURN' => 'draft_return',
+      _ => throw ArgumentError.value(checkType, 'checkType'),
+    };
+
+    return _activitiesCollection
+        .doc(activityId)
+        .collection('checks')
+        .doc(draftId);
+  }
+
+  @override
+  Future<ActivityCheckDraft?> getCheckDraft({
+    required String activityId,
+    required String checkType,
+  }) async {
+    final document = await _draftDocument(
+      activityId: activityId,
+      checkType: checkType,
+    ).get();
+
+    final data = document.data();
+    if (data == null) return null;
+
+    final methods = <String, String>{};
+    final raw = data['foundMethods'];
+    if (raw is Map) {
+      for (final entry in raw.entries) {
+        if (entry.key is String &&
+            (entry.value == 'QR' || entry.value == 'MANUAL')) {
+          methods[entry.key as String] = entry.value as String;
+        }
+      }
+    }
+
+    return ActivityCheckDraft(
+      startedAt: _toDateTime(data['startedAt']) ?? DateTime.now(),
+      foundMethods: methods,
+    );
+  }
+
+  @override
+  Future<void> saveCheckDraft({
+    required String activityId,
+    required String checkType,
+    required DateTime startedAt,
+    required Map<String, String> foundMethods,
+  }) async {
+    final activityDocument = _activitiesCollection.doc(activityId);
+    final draftDocument = _draftDocument(
+      activityId: activityId,
+      checkType: checkType,
+    );
+
+    await firestore.runTransaction((transaction) async {
+      final activitySnapshot = await transaction.get(activityDocument);
+      if (!activitySnapshot.exists) {
+        throw StateError('Activity no longer exists.');
+      }
+      ActivityStatusPolicy.requireDraft(
+        activitySnapshot.data()?['status'] as String?,
+        checkType,
+      );
+
+      transaction.set(draftDocument, {
+        // Drafts are not completed checks and do not appear in History.
+        'type': 'DRAFT',
+        'checkType': checkType,
+        'status': 'IN_PROGRESS',
+        'startedAt': Timestamp.fromDate(startedAt),
+        'foundMethods': Map<String, String>.from(foundMethods),
+        'updatedAt': Timestamp.now(),
+      });
+    });
   }
 
   @override
@@ -81,38 +164,50 @@ class FirestoreActivityRepository implements ActivityRepository {
   }) async {
     final activityDocument = _activitiesCollection.doc(activityId);
 
-    final checkDocument = activityDocument.collection('checks').doc();
+    final checkDocument = activityDocument.collection('checks').doc('return');
 
     final now = DateTime.now();
-    final batch = firestore.batch();
+    await firestore.runTransaction((transaction) async {
+      final activitySnapshot = await transaction.get(activityDocument);
+      if (!activitySnapshot.exists) {
+        throw StateError('Activity no longer exists.');
+      }
+      ActivityStatusPolicy.requireReturn(
+        activitySnapshot.data()?['status'] as String?,
+      );
 
-    batch.set(checkDocument, {
-      'type': 'RETURN',
-      'startedAt': Timestamp.fromDate(startedAt),
-      'completedAt': Timestamp.fromDate(now),
-      'status': 'COMPLETED',
-    });
-
-    for (final item in activityItems) {
-      final method = foundMethods[item.id];
-      final isFound = method != null;
-
-      final checkItemDocument = checkDocument.collection('items').doc(item.id);
-
-      batch.set(checkItemDocument, {
-        'activityItemId': item.id,
-        'status': isFound ? 'FOUND' : 'NOT_FOUND',
-        'method': method,
-        'checkedAt': isFound ? Timestamp.fromDate(now) : null,
+      transaction.set(checkDocument, {
+        'type': 'RETURN',
+        'startedAt': Timestamp.fromDate(startedAt),
+        'completedAt': Timestamp.fromDate(now),
+        'status': 'COMPLETED',
       });
-    }
 
-    batch.update(activityDocument, {
-      'status': 'COMPLETED',
-      'updatedAt': Timestamp.fromDate(now),
+      for (final item in activityItems) {
+        final method = foundMethods[item.id];
+        final isFound = method != null;
+
+        final checkItemDocument = checkDocument
+            .collection('items')
+            .doc(item.id);
+
+        transaction.set(checkItemDocument, {
+          'activityItemId': item.id,
+          'status': isFound ? 'FOUND' : 'NOT_FOUND',
+          'method': method,
+          'checkedAt': isFound ? Timestamp.fromDate(now) : null,
+        });
+      }
+
+      transaction.update(activityDocument, {
+        'status': 'COMPLETED',
+        'updatedAt': Timestamp.fromDate(now),
+      });
+
+      transaction.delete(
+        _draftDocument(activityId: activityId, checkType: 'RETURN'),
+      );
     });
-
-    await batch.commit();
   }
 
   @override
@@ -124,42 +219,56 @@ class FirestoreActivityRepository implements ActivityRepository {
   }) async {
     final activityDocument = _activitiesCollection.doc(activityId);
 
-    final checkDocument = activityDocument.collection('checks').doc();
+    final checkDocument = activityDocument
+        .collection('checks')
+        .doc('before_activity');
 
     final now = DateTime.now();
 
-    final batch = firestore.batch();
+    await firestore.runTransaction((transaction) async {
+      final activitySnapshot = await transaction.get(activityDocument);
+      if (!activitySnapshot.exists) {
+        throw StateError('Activity no longer exists.');
+      }
+      ActivityStatusPolicy.requireBefore(
+        activitySnapshot.data()?['status'] as String?,
+      );
 
-    batch.set(checkDocument, {
-      'type': 'BEFORE_ACTIVITY',
-      'startedAt': Timestamp.fromDate(startedAt),
-      'completedAt': Timestamp.fromDate(now),
-      'status': 'COMPLETED',
-    });
-
-    for (final item in activityItems) {
-      final method = foundMethods[item.id];
-
-      final isFound = method != null;
-
-      final checkItemDocument = checkDocument.collection('items').doc(item.id);
-
-      batch.set(checkItemDocument, {
-        'activityItemId': item.id,
-        'status': isFound ? 'FOUND' : 'NOT_FOUND',
-        'method': method,
-        'checkedAt': isFound ? Timestamp.fromDate(now) : null,
+      transaction.set(checkDocument, {
+        'type': 'BEFORE_ACTIVITY',
+        'startedAt': Timestamp.fromDate(startedAt),
+        'completedAt': Timestamp.fromDate(now),
+        'status': 'COMPLETED',
       });
-    }
 
-    // The Activity only becomes ACTIVE
-    // after the before-check is finished.
-    batch.update(activityDocument, {
-      'status': 'ACTIVE',
-      'updatedAt': Timestamp.fromDate(now),
+      for (final item in activityItems) {
+        final method = foundMethods[item.id];
+
+        final isFound = method != null;
+
+        final checkItemDocument = checkDocument
+            .collection('items')
+            .doc(item.id);
+
+        transaction.set(checkItemDocument, {
+          'activityItemId': item.id,
+          'status': isFound ? 'FOUND' : 'NOT_FOUND',
+          'method': method,
+          'checkedAt': isFound ? Timestamp.fromDate(now) : null,
+        });
+      }
+
+      // The Activity only becomes ACTIVE
+      // after the before-check is finished.
+      transaction.update(activityDocument, {
+        'status': 'ACTIVE',
+        'updatedAt': Timestamp.fromDate(now),
+      });
+
+      transaction.delete(
+        _draftDocument(activityId: activityId, checkType: 'BEFORE_ACTIVITY'),
+      );
     });
-
-    await batch.commit();
   }
 
   @override
@@ -187,6 +296,7 @@ class FirestoreActivityRepository implements ActivityRepository {
 
   @override
   Future<Activity> addActivity(Activity activity) async {
+    ActivityStatusPolicy.requireNew(activity.status);
     final document = _activitiesCollection.doc();
 
     final now = DateTime.now();
@@ -207,40 +317,50 @@ class FirestoreActivityRepository implements ActivityRepository {
     required String activityId,
     required Item item,
   }) async {
+    final activityDocument = _activitiesCollection.doc(activityId);
     final document = _activityItemsCollection(activityId).doc(item.id);
 
-    final existing = await document.get();
+    return firestore.runTransaction<ActivityItem>((transaction) async {
+      // Firestore transactions require all reads before any writes.
+      final activitySnapshot = await transaction.get(activityDocument);
+      if (!activitySnapshot.exists) {
+        throw StateError('Activity no longer exists.');
+      }
+      ActivityStatusPolicy.requireEditable(
+        activitySnapshot.data()?['status'] as String?,
+      );
 
-    if (existing.exists) {
-      return _activityItemFromDocument(existing);
-    }
+      final existing = await transaction.get(document);
+      if (existing.exists) {
+        return _activityItemFromDocument(existing);
+      }
 
-    final now = DateTime.now();
+      final now = DateTime.now();
+      transaction.set(document, {
+        'itemId': item.id,
+        'itemName': item.name,
+        'category': item.category,
+        'quantity': item.quantity,
+        'icon': item.icon,
+        'photoUrl': item.photoUrl,
+        'qrCode': item.qrCode,
+        'addedDuringActivity': true,
+        'createdAt': Timestamp.fromDate(now),
+      });
 
-    await document.set({
-      'itemId': item.id,
-      'itemName': item.name,
-      'category': item.category,
-      'quantity': item.quantity,
-      'icon': item.icon,
-      'photoUrl': item.photoUrl,
-      'qrCode': item.qrCode,
-      'addedDuringActivity': true,
-      'createdAt': Timestamp.fromDate(now),
+      return ActivityItem(
+        id: item.id,
+        itemId: item.id,
+        itemName: item.name,
+        category: item.category,
+        quantity: item.quantity,
+        icon: item.icon,
+        photoUrl: item.photoUrl,
+        qrCode: item.qrCode,
+        addedDuringActivity: true,
+        createdAt: now,
+      );
     });
-
-    return ActivityItem(
-      id: item.id,
-      itemId: item.id,
-      itemName: item.name,
-      category: item.category,
-      quantity: item.quantity,
-      icon: item.icon,
-      photoUrl: item.photoUrl,
-      qrCode: item.qrCode,
-      addedDuringActivity: true,
-      createdAt: now,
-    );
   }
 
   @override
@@ -248,6 +368,7 @@ class FirestoreActivityRepository implements ActivityRepository {
     required Activity activity,
     required List<Item> items,
   }) async {
+    ActivityStatusPolicy.requireNew(activity.status);
     final activityDocument = _activitiesCollection.doc();
 
     final now = DateTime.now();
@@ -300,8 +421,7 @@ class FirestoreActivityRepository implements ActivityRepository {
 
       'reminderMinutes': activity.reminderMinutes,
 
-      'status': activity.status,
-
+      // Status is controlled by the transactional completion methods.
       'updatedAt': Timestamp.now(),
     });
   }
@@ -316,10 +436,9 @@ class FirestoreActivityRepository implements ActivityRepository {
     required String activityId,
     required String status,
   }) async {
-    await _activitiesCollection.doc(activityId).update({
-      'status': status,
-      'updatedAt': Timestamp.now(),
-    });
+    throw UnsupportedError(
+      'Use the transactional Before or Return check to change Activity status.',
+    );
   }
 
   CollectionReference<Map<String, dynamic>> _activityItemsCollection(

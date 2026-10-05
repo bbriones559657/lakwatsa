@@ -94,7 +94,6 @@ class _ActivityCheckResultsScreenState
             _CheckSummary(
               beforeResults: data.beforeItems,
               returnResults: data.returnItems,
-              totalItems: data.activityItems.length,
             ),
 
             const SizedBox(height: 24),
@@ -307,12 +306,9 @@ class _CheckSummary extends StatelessWidget {
 
   final Map<String, ActivityCheckItem> returnResults;
 
-  final int totalItems;
-
   const _CheckSummary({
     required this.beforeResults,
     required this.returnResults,
-    required this.totalItems,
   });
 
   @override
@@ -330,7 +326,9 @@ class _CheckSummary extends StatelessWidget {
         Expanded(
           child: _SummaryCard(
             title: 'Before',
-            value: '$beforeFound / $totalItems',
+            value: beforeResults.isEmpty
+                ? '—'
+                : '$beforeFound / ${beforeResults.length}',
             subtitle: 'items found',
           ),
         ),
@@ -340,7 +338,9 @@ class _CheckSummary extends StatelessWidget {
         Expanded(
           child: _SummaryCard(
             title: 'Return',
-            value: '$returnFound / $totalItems',
+            value: returnResults.isEmpty
+                ? '—'
+                : '$returnFound / ${returnResults.length}',
             subtitle: 'items found',
           ),
         ),

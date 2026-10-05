@@ -42,6 +42,7 @@ class _ActivityQrScannerScreenState
       checkedMethods;
 
   bool isProcessing = false;
+  bool _closing = false;
 
   String? message;
   bool messageIsSuccess = false;
@@ -345,18 +346,28 @@ class _ActivityQrScannerScreenState
     );
   }
 
+  // Android system Back and the visible close button must return the same
+  // scan results to the parent check screen.
   void _closeScanner() {
-    Navigator.pop(
-      context,
-      checkedMethods,
-    );
+    if (_closing || !mounted) return;
+
+    setState(() => _closing = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Navigator.of(context).pop(Map<String, String>.from(checkedMethods));
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: SafeArea(
+    return PopScope<Map<String, String>>(
+      canPop: _closing,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) _closeScanner();
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: SafeArea(
         child: Stack(
           children: [
             Positioned.fill(
@@ -552,6 +563,7 @@ class _ActivityQrScannerScreenState
           ],
         ),
       ),
+    ),
     );
   }
 }

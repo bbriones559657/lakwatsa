@@ -320,7 +320,9 @@ class _ListsScreenState extends State<ListsScreen> {
 
                                 await listRepository!.addList(list);
 
-                                if (!mounted) {
+                                if (!mounted ||
+                                    !context.mounted ||
+                                    !dialogContext.mounted) {
                                   return;
                                 }
 
@@ -332,7 +334,7 @@ class _ListsScreenState extends State<ListsScreen> {
                                   ),
                                 );
                               } catch (error) {
-                                if (!mounted) {
+                                if (!mounted || !context.mounted) {
                                   return;
                                 }
 
