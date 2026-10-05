@@ -8,6 +8,7 @@ import '../../repositories/firestore_item_repository.dart';
 import '../../repositories/firestore_list_repository.dart';
 import '../../services/auth_service.dart';
 import '../../theme/app_theme.dart';
+import '../lists/add_items_screen.dart';
 
 class CreateActivityScreen extends StatefulWidget {
   const CreateActivityScreen({super.key});
@@ -26,7 +27,10 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
   String selectedType = 'Trip';
   String? selectedListId;
 
-  Future<List<Item>>? selectedListItemsFuture;
+  List<Item> selectedActivityItems = [];
+  bool isLoadingSelectedList = false;
+  String? selectedListLoadError;
+  int selectedListLoadVersion = 0;
 
   DateTime selectedDate = DateTime.now();
 
@@ -119,6 +123,8 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
         }
 
         final lists = snapshot.data ?? [];
+        final createDisabled =
+            isSaving || lists.isEmpty || isLoadingSelectedList;
 
         return ListView(
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 30),
@@ -174,17 +180,11 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
                     child: Text(list.name),
                   );
                 }).toList(),
-                onChanged: (value) {
-                  setState(() {
-                    selectedListId = value;
-
-                    if (value != null) {
-                      selectedListItemsFuture = _loadListItems(value);
-                    } else {
-                      selectedListItemsFuture = null;
-                    }
-                  });
-                },
+                onChanged: isSaving
+                    ? null
+                    : (value) {
+                        _selectPackingList(value);
+                      },
               ),
 
             if (selectedListId != null) ...[
@@ -329,16 +329,14 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
             const SizedBox(height: 28),
 
             GestureDetector(
-              onTap: isSaving || lists.isEmpty ? null : _saveActivity,
+              onTap: createDisabled ? null : _saveActivity,
               child: Container(
                 height: 52,
                 decoration: BoxDecoration(
-                  color: isSaving || lists.isEmpty
-                      ? AppColors.muted
-                      : AppColors.ink,
+                  color: createDisabled ? AppColors.muted : AppColors.ink,
                   border: Border.all(color: AppColors.ink, width: 2),
                   borderRadius: BorderRadius.circular(4),
-                  boxShadow: isSaving || lists.isEmpty
+                  boxShadow: createDisabled
                       ? null
                       : const [
                           BoxShadow(
@@ -363,90 +361,184 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
   }
 
   Widget _buildSelectedListPreview() {
-    final future = selectedListItemsFuture;
-
-    if (future == null) {
-      return const SizedBox.shrink();
-    }
-
-    return FutureBuilder<List<Item>>(
-      future: future,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: AppColors.card,
-              border: Border.all(color: AppColors.ink, width: 1.5),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: const Center(child: CircularProgressIndicator()),
-          );
-        }
-
-        if (snapshot.hasError) {
-          return Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: AppColors.card,
-              border: Border.all(color: AppColors.ink, width: 1.5),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              'Failed to load list items.',
-              style: AppTextStyles.body,
-            ),
-          );
-        }
-
-        final items = snapshot.data ?? [];
-
-        return Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: AppColors.card,
-            border: Border.all(color: AppColors.ink, width: 1.5),
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        border: Border.all(color: AppColors.ink, width: 1.5),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              Row(
-                children: [
-                  Text('Items in this list', style: AppTextStyles.bodyBold),
-
-                  const Spacer(),
-
-                  Text(
-                    '${items.length} '
-                    '${items.length == 1 ? 'item' : 'items'}',
-                    style: AppTextStyles.body,
-                  ),
-                ],
+              Expanded(
+                child: Text('Activity Items', style: AppTextStyles.bodyBold),
               ),
-
-              const SizedBox(height: 10),
-
-              if (items.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Text(
-                    'No items in this list.',
-                    style: AppTextStyles.body,
-                  ),
-                )
-              else
-                ...items.map((item) {
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: _PreviewItem(item: item),
-                  );
-                }),
+              Text(
+                '${selectedActivityItems.length} '
+                '${selectedActivityItems.length == 1 ? 'item' : 'items'}',
+                style: AppTextStyles.body,
+              ),
             ],
           ),
-        );
-      },
+
+          const SizedBox(height: 5),
+
+          Text(
+            'Changes here only affect this Activity, not the Packing List.',
+            style: AppTextStyles.body.copyWith(color: AppColors.muted),
+          ),
+
+          const SizedBox(height: 12),
+
+          if (isLoadingSelectedList)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 18),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (selectedListLoadError != null) ...[
+            Text(selectedListLoadError!, style: AppTextStyles.body),
+            const SizedBox(height: 6),
+            TextButton(
+              onPressed: isSaving
+                  ? null
+                  : () {
+                      _selectPackingList(selectedListId);
+                    },
+              child: const Text('Retry'),
+            ),
+          ] else if (selectedActivityItems.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Text(
+                'No items selected. Add at least one Item for this Activity.',
+                style: AppTextStyles.body,
+              ),
+            )
+          else
+            ...selectedActivityItems.map((item) {
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _PreviewItem(
+                  item: item,
+                  onRemove: isSaving
+                      ? null
+                      : () {
+                          _removeSelectedItem(item.id);
+                        },
+                ),
+              );
+            }),
+
+          if (!isLoadingSelectedList && selectedListLoadError == null) ...[
+            const SizedBox(height: 4),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: isSaving ? null : _addItemsToSelection,
+                icon: const Icon(Icons.add),
+                label: const Text('Add from My Items'),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
+  }
+
+  Future<void> _selectPackingList(String? listId) async {
+    final loadVersion = ++selectedListLoadVersion;
+
+    setState(() {
+      selectedListId = listId;
+      selectedActivityItems = [];
+      selectedListLoadError = null;
+      isLoadingSelectedList = listId != null;
+    });
+
+    if (listId == null) {
+      return;
+    }
+
+    try {
+      final items = await _loadListItems(listId);
+
+      if (!mounted ||
+          loadVersion != selectedListLoadVersion ||
+          selectedListId != listId) {
+        return;
+      }
+
+      final uniqueItems = <String, Item>{
+        for (final item in items) item.id: item,
+      }.values.toList();
+
+      setState(() {
+        selectedActivityItems = uniqueItems;
+        isLoadingSelectedList = false;
+      });
+    } catch (_) {
+      if (!mounted ||
+          loadVersion != selectedListLoadVersion ||
+          selectedListId != listId) {
+        return;
+      }
+
+      setState(() {
+        selectedActivityItems = [];
+        selectedListLoadError =
+            'Failed to load Items from this Packing List.';
+        isLoadingSelectedList = false;
+      });
+    }
+  }
+
+  Future<void> _addItemsToSelection() async {
+    if (selectedListId == null || isLoadingSelectedList || isSaving) {
+      return;
+    }
+
+    final items = await Navigator.push<List<Item>>(
+      context,
+      MaterialPageRoute(
+        builder: (context) {
+          return AddItemsScreen(
+            existingItemIds:
+                selectedActivityItems.map((item) => item.id).toSet(),
+          );
+        },
+      ),
+    );
+
+    if (!mounted || items == null || items.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      final merged = <String, Item>{
+        for (final item in selectedActivityItems) item.id: item,
+      };
+
+      for (final item in items) {
+        merged.putIfAbsent(item.id, () => item);
+      }
+
+      selectedActivityItems = merged.values.toList();
+    });
+  }
+
+  void _removeSelectedItem(String itemId) {
+    if (isSaving) {
+      return;
+    }
+
+    setState(() {
+      selectedActivityItems = selectedActivityItems
+          .where((item) => item.id != itemId)
+          .toList();
+    });
   }
 
   Future<List<Item>> _loadListItems(String listId) async {
@@ -509,10 +601,33 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
       return;
     }
 
+    if (activityName.length > 100) {
+      _showMessage('Activity name must be 100 characters or fewer.');
+      return;
+    }
+
     if (selectedListId == null) {
       _showMessage('Please choose a packing list.');
       return;
     }
+
+    if (isLoadingSelectedList) {
+      _showMessage('Please wait for the Packing List to finish loading.');
+      return;
+    }
+
+    if (selectedListLoadError != null) {
+      _showMessage('Please retry loading the Packing List Items.');
+      return;
+    }
+
+    if (selectedActivityItems.isEmpty) {
+      _showMessage('Please add at least one Item to this Activity.');
+      return;
+    }
+
+    final listId = selectedListId!;
+    final activityItems = List<Item>.from(selectedActivityItems);
 
     final startAt = DateTime(
       selectedDate.year,
@@ -540,11 +655,9 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
     });
 
     try {
-      final items = await _loadListItems(selectedListId!);
-
       final activity = model.Activity(
         id: '',
-        listId: selectedListId!,
+        listId: listId,
         name: activityName,
         type: selectedType,
         activityDate: DateTime(
@@ -561,7 +674,7 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
 
       await activityRepository!.addActivityWithItems(
         activity: activity,
-        items: items,
+        items: activityItems,
       );
 
       if (!mounted) {
@@ -614,8 +727,9 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
 
 class _PreviewItem extends StatelessWidget {
   final Item item;
+  final VoidCallback? onRemove;
 
-  const _PreviewItem({required this.item});
+  const _PreviewItem({required this.item, this.onRemove});
 
   @override
   Widget build(BuildContext context) {
@@ -669,6 +783,7 @@ class _PreviewItem extends StatelessWidget {
 
           if (item.hasQr)
             Container(
+              margin: EdgeInsets.only(right: onRemove == null ? 0 : 4),
               padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
               decoration: BoxDecoration(
                 color: AppColors.green,
@@ -680,6 +795,23 @@ class _PreviewItem extends StatelessWidget {
                 style: AppTextStyles.bodyBold.copyWith(
                   fontSize: 9,
                   color: AppColors.background,
+                ),
+              ),
+            ),
+
+          if (onRemove != null)
+            Tooltip(
+              message: 'Remove from Activity',
+              child: GestureDetector(
+                onTap: onRemove,
+                child: const SizedBox(
+                  width: 34,
+                  height: 34,
+                  child: Icon(
+                    Icons.close,
+                    color: AppColors.ink,
+                    size: 20,
+                  ),
                 ),
               ),
             ),
