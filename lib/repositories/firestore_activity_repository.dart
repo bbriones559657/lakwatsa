@@ -317,49 +317,141 @@ class FirestoreActivityRepository implements ActivityRepository {
     required String activityId,
     required Item item,
   }) async {
-    final activityDocument = _activitiesCollection.doc(activityId);
-    final document = _activityItemsCollection(activityId).doc(item.id);
+    final results = await addItemsToActivity(
+      activityId: activityId,
+      items: [item],
+    );
 
-    return firestore.runTransaction<ActivityItem>((transaction) async {
+    return results.single;
+  }
+
+  @override
+  Future<List<ActivityItem>> addItemsToActivity({
+    required String activityId,
+    required List<Item> items,
+  }) async {
+    if (items.isEmpty) {
+      return const [];
+    }
+
+    final uniqueItems = <String, Item>{
+      for (final item in items) item.id: item,
+    }.values.toList();
+
+    final activityDocument = _activitiesCollection.doc(activityId);
+    final itemDocuments = uniqueItems
+        .map((item) => _activityItemsCollection(activityId).doc(item.id))
+        .toList();
+
+    return firestore.runTransaction<List<ActivityItem>>((transaction) async {
       // Firestore transactions require all reads before any writes.
       final activitySnapshot = await transaction.get(activityDocument);
       if (!activitySnapshot.exists) {
         throw StateError('Activity no longer exists.');
       }
-      ActivityStatusPolicy.requireEditable(
-        activitySnapshot.data()?['status'] as String?,
-      );
 
-      final existing = await transaction.get(document);
-      if (existing.exists) {
-        return _activityItemFromDocument(existing);
+      final status = activitySnapshot.data()?['status'] as String?;
+      final addedDuringActivity =
+          ActivityStatusPolicy.addedDuringActivityFor(status);
+
+      final existingSnapshots = <DocumentSnapshot<Map<String, dynamic>>>[];
+      for (final document in itemDocuments) {
+        existingSnapshots.add(await transaction.get(document));
       }
 
       final now = DateTime.now();
-      transaction.set(document, {
-        'itemId': item.id,
-        'itemName': item.name,
-        'category': item.category,
-        'quantity': item.quantity,
-        'icon': item.icon,
-        'photoUrl': item.photoUrl,
-        'qrCode': item.qrCode,
-        'addedDuringActivity': true,
-        'createdAt': Timestamp.fromDate(now),
-      });
+      final results = <ActivityItem>[];
 
-      return ActivityItem(
-        id: item.id,
-        itemId: item.id,
-        itemName: item.name,
-        category: item.category,
-        quantity: item.quantity,
-        icon: item.icon,
-        photoUrl: item.photoUrl,
-        qrCode: item.qrCode,
-        addedDuringActivity: true,
-        createdAt: now,
+      for (var index = 0; index < uniqueItems.length; index++) {
+        final item = uniqueItems[index];
+        final document = itemDocuments[index];
+        final existing = existingSnapshots[index];
+
+        if (existing.exists) {
+          results.add(_activityItemFromDocument(existing));
+          continue;
+        }
+
+        transaction.set(document, {
+          'itemId': item.id,
+          'itemName': item.name,
+          'category': item.category,
+          'quantity': item.quantity,
+          'icon': item.icon,
+          'photoUrl': item.photoUrl,
+          'qrCode': item.qrCode,
+          'addedDuringActivity': addedDuringActivity,
+          'createdAt': Timestamp.fromDate(now),
+        });
+
+        results.add(
+          ActivityItem(
+            id: item.id,
+            itemId: item.id,
+            itemName: item.name,
+            category: item.category,
+            quantity: item.quantity,
+            icon: item.icon,
+            photoUrl: item.photoUrl,
+            qrCode: item.qrCode,
+            addedDuringActivity: addedDuringActivity,
+            createdAt: now,
+          ),
+        );
+      }
+
+      return results;
+    });
+  }
+
+  @override
+  Future<void> removeItemFromActivity({
+    required String activityId,
+    required String itemId,
+  }) async {
+    final activityDocument = _activitiesCollection.doc(activityId);
+    final itemDocument = _activityItemsCollection(activityId).doc(itemId);
+    final draftDocument = _draftDocument(
+      activityId: activityId,
+      checkType: 'BEFORE_ACTIVITY',
+    );
+
+    await firestore.runTransaction((transaction) async {
+      // Keep a partially completed Before draft consistent with item removal.
+      final activitySnapshot = await transaction.get(activityDocument);
+      final draftSnapshot = await transaction.get(draftDocument);
+
+      if (!activitySnapshot.exists) {
+        throw StateError('Activity no longer exists.');
+      }
+
+      ActivityStatusPolicy.requireItemRemoval(
+        activitySnapshot.data()?['status'] as String?,
       );
+
+      if (draftSnapshot.exists) {
+        final draftData = draftSnapshot.data();
+        final methods = <String, String>{};
+        final rawMethods = draftData?['foundMethods'];
+
+        if (rawMethods is Map) {
+          for (final entry in rawMethods.entries) {
+            if (entry.key is String &&
+                (entry.value == 'QR' || entry.value == 'MANUAL')) {
+              methods[entry.key as String] = entry.value as String;
+            }
+          }
+        }
+
+        methods.remove(itemId);
+
+        transaction.update(draftDocument, {
+          'foundMethods': methods,
+          'updatedAt': Timestamp.now(),
+        });
+      }
+
+      transaction.delete(itemDocument);
     });
   }
 

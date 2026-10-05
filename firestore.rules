@@ -81,6 +81,11 @@ service cloud.firestore {
         && (d.qrCode == null || d.qrCode is string)
         && d.addedDuringActivity is bool && d.createdAt is timestamp;
     }
+    function activityItemTimingMatches(uid, activityId, d) {
+      let status = getAfter(activityPath(uid, activityId)).data.status;
+      return (status == 'UPCOMING' && d.addedDuringActivity == false)
+        || (status == 'ACTIVE' && d.addedDuringActivity == true);
+    }
     function validDraft(d, checkId) {
       return d.keys().hasOnly([
           'type', 'checkType', 'status', 'startedAt', 'foundMethods', 'updatedAt'
@@ -154,9 +159,11 @@ service cloud.firestore {
           allow read: if owner(uid);
           // getAfter allows initial Activity+Items batch creation.
           allow create: if owner(uid) && validActivityItem(request.resource.data, itemId)
-            && getAfter(activityPath(uid, activityId)).data.status in ['UPCOMING', 'ACTIVE'];
-          // Current Flutter app only adds Activity Items; it does not edit/remove them.
-          allow update, delete: if false;
+            && activityItemTimingMatches(uid, activityId, request.resource.data);
+          allow update: if false;
+          // Removing Items after Before Check would rewrite the meaning of saved history.
+          allow delete: if owner(uid)
+            && get(activityPath(uid, activityId)).data.status == 'UPCOMING';
         }
         match /checks/{checkId} {
           allow read: if owner(uid);

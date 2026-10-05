@@ -33,6 +33,15 @@ class ActivityStatusPolicy {
     }
   }
 
+  static bool addedDuringActivityFor(String? current) {
+    requireEditable(current);
+    return current == 'ACTIVE';
+  }
+
+  static void requireItemRemoval(String? current) {
+    _require(current, 'UPCOMING', 'remove Items from the Activity');
+  }
+
   static void _require(String? current, String expected, String action) {
     if (current != expected) {
       throw StateError(

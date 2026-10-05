@@ -149,6 +149,53 @@ test('Activity with its initial Items can be created as a single batch', async (
   await assertSucceeds(batch.commit());
 });
 
+test('Activity Item management follows Activity status and timing', async () => {
+  const alice = client();
+
+  await seedActivity('UPCOMING');
+  await assertSucceeds(
+    setDoc(activityItemRef(alice, 'phone'), activityItem('phone', false)),
+  );
+  await assertFails(
+    setDoc(activityItemRef(alice, 'wrong-upcoming'), activityItem('wrong-upcoming', true)),
+  );
+  await assertSucceeds(setDoc(checkRef(alice, 'draft_before_activity'), {
+    ...draft(),
+    foundMethods: { bottle: 'MANUAL', phone: 'QR' },
+  }));
+  const removeWithDraft = writeBatch(alice);
+  removeWithDraft.update(checkRef(alice, 'draft_before_activity'), {
+    foundMethods: { bottle: 'MANUAL' },
+    updatedAt: later,
+  });
+  removeWithDraft.delete(activityItemRef(alice, 'phone'));
+  await assertSucceeds(removeWithDraft.commit());
+
+  await environment.withSecurityRulesDisabled(async context => {
+    const admin = context.firestore();
+    await updateDoc(activityRef(admin), { status: 'ACTIVE', updatedAt: later });
+  });
+
+  await assertSucceeds(
+    setDoc(activityItemRef(alice, 'charger'), activityItem('charger', true)),
+  );
+  await assertFails(
+    setDoc(activityItemRef(alice, 'wrong-active'), activityItem('wrong-active', false)),
+  );
+  await assertFails(deleteDoc(activityItemRef(alice, 'bottle')));
+  await assertFails(deleteDoc(activityItemRef(alice, 'charger')));
+
+  await environment.withSecurityRulesDisabled(async context => {
+    const admin = context.firestore();
+    await updateDoc(activityRef(admin), { status: 'COMPLETED', updatedAt: later });
+  });
+
+  await assertFails(
+    setDoc(activityItemRef(alice, 'keys'), activityItem('keys', true)),
+  );
+  await assertFails(deleteDoc(activityItemRef(alice, 'bottle')));
+});
+
 test('v2 Item rules remain compatible, including owner-only access', async () => {
   const alice = client();
   const v2 = doc(alice, 'lakwatsa_v2_users/alice/items/bottle');

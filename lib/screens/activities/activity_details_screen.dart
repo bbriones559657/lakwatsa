@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../../models/activity.dart' as model;
 import '../../models/activity_item.dart';
+import '../../models/item.dart';
 import '../../repositories/firestore_activity_repository.dart';
 import '../../services/auth_service.dart';
+import '../lists/add_items_screen.dart';
 import 'activity_check_screen.dart';
 import 'activity_return_check_screen.dart';
 import 'activity_check_results_screen.dart';
@@ -20,6 +22,8 @@ class ActivityDetailsScreen extends StatefulWidget {
 
 class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
   FirestoreActivityRepository? activityRepository;
+  Stream<List<ActivityItem>>? activityItemsStream;
+  bool isManagingItems = false;
 
   @override
   void initState() {
@@ -29,6 +33,9 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
 
     if (user != null) {
       activityRepository = FirestoreActivityRepository(userId: user.uid);
+      activityItemsStream = activityRepository!.watchActivityItems(
+        widget.activity.id,
+      );
     }
   }
 
@@ -55,7 +62,7 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
     }
 
     return StreamBuilder<List<ActivityItem>>(
-      stream: activityRepository!.watchActivityItems(widget.activity.id),
+      stream: activityItemsStream,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return Center(
@@ -86,16 +93,28 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
 
             Row(
               children: [
-                Text(
-                  'Items',
-                  style: AppTextStyles.bodyBold.copyWith(fontSize: 16),
+                Expanded(
+                  child: Text(
+                    'Items',
+                    style: AppTextStyles.bodyBold.copyWith(fontSize: 16),
+                  ),
                 ),
-                const Spacer(),
                 Text(
                   '${items.length} '
                   '${items.length == 1 ? 'item' : 'items'}',
                   style: AppTextStyles.body,
                 ),
+                if (!widget.activity.isCompleted) ...[
+                  const SizedBox(width: 10),
+                  _ItemManagementButton(
+                    enabled: !isManagingItems,
+                    label: 'Add',
+                    icon: Icons.add,
+                    onTap: () {
+                      _addItems(items);
+                    },
+                  ),
+                ],
               ],
             ),
 
@@ -107,16 +126,152 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
               ...items.map((item) {
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 12),
-                  child: _ActivityItemCard(item: item),
+                  child: _ActivityItemCard(
+                    item: item,
+                    onRemove: widget.activity.isUpcoming && !isManagingItems
+                        ? () {
+                            _confirmRemoveItem(item);
+                          }
+                        : null,
+                  ),
                 );
               }),
 
             const SizedBox(height: 14),
 
-            _ActionButton(activity: widget.activity, onPressed: _handleAction),
+            _ActionButton(
+              activity: widget.activity,
+              onPressed: isManagingItems ? null : _handleAction,
+            ),
           ],
         );
       },
+    );
+  }
+
+  Future<void> _addItems(List<ActivityItem> existingItems) async {
+    if (isManagingItems || widget.activity.isCompleted) {
+      return;
+    }
+
+    final selectedItems = await Navigator.push<List<Item>>(
+      context,
+      MaterialPageRoute(
+        builder: (context) {
+          return AddItemsScreen(
+            existingItemIds: existingItems.map((item) => item.itemId).toSet(),
+          );
+        },
+      ),
+    );
+
+    if (!mounted || selectedItems == null || selectedItems.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      isManagingItems = true;
+    });
+
+    try {
+      await activityRepository!.addItemsToActivity(
+        activityId: widget.activity.id,
+        items: selectedItems,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      _showMessage(
+        selectedItems.length == 1
+            ? 'Item added to Activity.'
+            : '${selectedItems.length} Items added to Activity.',
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      _showMessage('Failed to add Items: $error');
+    } finally {
+      if (mounted) {
+        setState(() {
+          isManagingItems = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _confirmRemoveItem(ActivityItem item) async {
+    if (isManagingItems || !widget.activity.isUpcoming) {
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Remove Item?'),
+          content: Text(
+            'Remove "${item.itemName}" from this Activity? '
+            'The Item will stay in My Items.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context, false);
+              },
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context, true);
+              },
+              child: const Text('Remove'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true || !mounted) {
+      return;
+    }
+
+    setState(() {
+      isManagingItems = true;
+    });
+
+    try {
+      await activityRepository!.removeItemFromActivity(
+        activityId: widget.activity.id,
+        itemId: item.itemId,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      _showMessage('${item.itemName} removed from Activity.');
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      _showMessage('Failed to remove Item: $error');
+    } finally {
+      if (mounted) {
+        setState(() {
+          isManagingItems = false;
+        });
+      }
+    }
+  }
+
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
     );
   }
 
@@ -368,8 +523,9 @@ class _StatusBadge extends StatelessWidget {
 
 class _ActivityItemCard extends StatelessWidget {
   final ActivityItem item;
+  final VoidCallback? onRemove;
 
-  const _ActivityItemCard({required this.item});
+  const _ActivityItemCard({required this.item, this.onRemove});
 
   @override
   Widget build(BuildContext context) {
@@ -441,7 +597,7 @@ class _ActivityItemCard extends StatelessWidget {
 
           if (item.hasQr)
             Container(
-              margin: const EdgeInsets.only(right: 12),
+              margin: EdgeInsets.only(right: onRemove == null ? 12 : 6),
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
               decoration: BoxDecoration(
                 color: AppColors.green,
@@ -453,6 +609,23 @@ class _ActivityItemCard extends StatelessWidget {
                 style: AppTextStyles.pixelDark.copyWith(
                   color: AppColors.background,
                   fontSize: 5,
+                ),
+              ),
+            ),
+
+          if (onRemove != null)
+            Tooltip(
+              message: 'Remove item',
+              child: GestureDetector(
+                onTap: onRemove,
+                child: const SizedBox(
+                  width: 42,
+                  height: 42,
+                  child: Icon(
+                    Icons.delete_outline,
+                    color: AppColors.ink,
+                    size: 22,
+                  ),
                 ),
               ),
             ),
@@ -489,9 +662,53 @@ class _EmptyItems extends StatelessWidget {
   }
 }
 
+class _ItemManagementButton extends StatelessWidget {
+  final bool enabled;
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  const _ItemManagementButton({
+    required this.enabled,
+    required this.label,
+    required this.icon,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: enabled ? onTap : null,
+      child: Container(
+        height: 34,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          color: enabled ? AppColors.ink : AppColors.muted,
+          border: Border.all(color: AppColors.ink, width: 1.5),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: AppColors.background, size: 17),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: AppTextStyles.bodyBold.copyWith(
+                color: AppColors.background,
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _ActionButton extends StatelessWidget {
   final model.Activity activity;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   const _ActionButton({required this.activity, required this.onPressed});
 
@@ -512,17 +729,21 @@ class _ActionButton extends StatelessWidget {
         text = 'Check Items Before Leaving';
     }
 
+    final enabled = onPressed != null;
+
     return GestureDetector(
       onTap: onPressed,
       child: Container(
         height: 52,
         decoration: BoxDecoration(
-          color: AppColors.ink,
+          color: enabled ? AppColors.ink : AppColors.muted,
           border: Border.all(color: AppColors.ink, width: 2),
           borderRadius: BorderRadius.circular(4),
-          boxShadow: const [
-            BoxShadow(color: AppColors.green, offset: Offset(3, 3)),
-          ],
+          boxShadow: enabled
+              ? const [
+                  BoxShadow(color: AppColors.green, offset: Offset(3, 3)),
+                ]
+              : null,
         ),
         alignment: Alignment.center,
         child: Text(
