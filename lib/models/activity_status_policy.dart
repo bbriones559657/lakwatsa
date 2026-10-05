@@ -42,6 +42,15 @@ class ActivityStatusPolicy {
     _require(current, 'UPCOMING', 'remove Items from the Activity');
   }
 
+  static void requireMetadataEdit(String? current) {
+    if (current != 'UPCOMING' && current != 'ACTIVE') {
+      throw StateError(
+        'Cannot edit Activity details while the Activity is '
+        '${current ?? 'UNKNOWN'}.',
+      );
+    }
+  }
+
   static void _require(String? current, String expected, String action) {
     if (current != expected) {
       throw StateError(

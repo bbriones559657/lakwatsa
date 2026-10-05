@@ -498,23 +498,39 @@ class FirestoreActivityRepository implements ActivityRepository {
 
   @override
   Future<void> updateActivity(Activity activity) async {
-    await _activitiesCollection.doc(activity.id).update({
-      'listId': activity.listId,
-      'name': activity.name.trim(),
-      'type': activity.type,
+    final activityDocument = _activitiesCollection.doc(activity.id);
 
-      'activityDate': Timestamp.fromDate(activity.activityDate),
+    await firestore.runTransaction((transaction) async {
+      final activitySnapshot = await transaction.get(activityDocument);
+      if (!activitySnapshot.exists) {
+        throw StateError('Activity no longer exists.');
+      }
 
-      'startAt': Timestamp.fromDate(activity.startAt),
+      final currentStatus = activitySnapshot.data()?['status'] as String?;
+      ActivityStatusPolicy.requireMetadataEdit(currentStatus);
 
-      'endAt': Timestamp.fromDate(activity.endAt),
+      if (activity.status != currentStatus) {
+        throw StateError(
+          'Activity status changed. Reopen the Activity and try again.',
+        );
+      }
 
-      'reminderEnabled': activity.reminderEnabled,
+      final updates = <String, dynamic>{
+        'name': activity.name.trim(),
+        'type': activity.type,
+        'endAt': Timestamp.fromDate(activity.endAt),
+        'reminderEnabled': activity.reminderEnabled,
+        'reminderMinutes': activity.reminderMinutes,
+        'updatedAt': Timestamp.now(),
+      };
 
-      'reminderMinutes': activity.reminderMinutes,
+      // Once an Activity is ACTIVE, its original date/start time is history.
+      if (currentStatus == 'UPCOMING') {
+        updates['activityDate'] = Timestamp.fromDate(activity.activityDate);
+        updates['startAt'] = Timestamp.fromDate(activity.startAt);
+      }
 
-      // Status is controlled by the transactional completion methods.
-      'updatedAt': Timestamp.now(),
+      transaction.update(activityDocument, updates);
     });
   }
 

@@ -149,6 +149,49 @@ test('Activity with its initial Items can be created as a single batch', async (
   await assertSucceeds(batch.commit());
 });
 
+test('Activity metadata edits are status-aware', async () => {
+  const alice = client();
+  const movedStart = Timestamp.fromDate(new Date('2026-10-06T10:00:00.000Z'));
+  const movedEnd = Timestamp.fromDate(new Date('2026-10-06T12:00:00.000Z'));
+
+  await seedActivity('UPCOMING');
+
+  await assertSucceeds(updateDoc(activityRef(alice), {
+    name: 'Updated Trip',
+    activityDate: movedStart,
+    startAt: movedStart,
+    endAt: movedEnd,
+    reminderEnabled: true,
+    reminderMinutes: 60,
+    updatedAt: later,
+  }));
+  await assertFails(updateDoc(activityRef(alice), {
+    listId: 'different-list',
+    updatedAt: later,
+  }));
+
+  await environment.withSecurityRulesDisabled(async context => {
+    const admin = context.firestore();
+    await updateDoc(activityRef(admin), { status: 'ACTIVE', updatedAt: later });
+  });
+
+  await assertSucceeds(updateDoc(activityRef(alice), {
+    name: 'Updated While Active',
+    endAt: movedEnd,
+    reminderEnabled: false,
+    reminderMinutes: 15,
+    updatedAt: later,
+  }));
+  await assertFails(updateDoc(activityRef(alice), {
+    startAt: now,
+    updatedAt: later,
+  }));
+  await assertFails(updateDoc(activityRef(alice), {
+    activityDate: now,
+    updatedAt: later,
+  }));
+});
+
 test('Activity Item management follows Activity status and timing', async () => {
   const alice = client();
 

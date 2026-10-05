@@ -49,12 +49,24 @@ service cloud.firestore {
         && d.createdAt is timestamp && d.updatedAt is timestamp;
     }
     function metadataOnly() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
       return request.resource.data.status == resource.data.status
         && request.resource.data.createdAt == resource.data.createdAt
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'listId', 'name', 'type', 'activityDate', 'startAt', 'endAt',
-          'reminderEnabled', 'reminderMinutes', 'updatedAt'
-        ]);
+        && request.resource.data.listId == resource.data.listId
+        && (
+          (resource.data.status == 'UPCOMING'
+            && changed.hasOnly([
+              'name', 'type', 'activityDate', 'startAt', 'endAt',
+              'reminderEnabled', 'reminderMinutes', 'updatedAt'
+            ]))
+          || (resource.data.status == 'ACTIVE'
+            && request.resource.data.activityDate == resource.data.activityDate
+            && request.resource.data.startAt == resource.data.startAt
+            && changed.hasOnly([
+              'name', 'type', 'endAt',
+              'reminderEnabled', 'reminderMinutes', 'updatedAt'
+            ]))
+        );
     }
     function completesCheck(uid, activityId, checkId) {
       return beforeOrReturnCheck(checkId)

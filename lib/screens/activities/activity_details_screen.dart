@@ -9,6 +9,7 @@ import '../lists/add_items_screen.dart';
 import 'activity_check_screen.dart';
 import 'activity_return_check_screen.dart';
 import 'activity_check_results_screen.dart';
+import 'edit_activity_screen.dart';
 import '../../theme/app_theme.dart';
 
 class ActivityDetailsScreen extends StatefulWidget {
@@ -23,18 +24,20 @@ class ActivityDetailsScreen extends StatefulWidget {
 class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
   FirestoreActivityRepository? activityRepository;
   Stream<List<ActivityItem>>? activityItemsStream;
+  late model.Activity activity;
   bool isManagingItems = false;
 
   @override
   void initState() {
     super.initState();
+    activity = widget.activity;
 
     final user = AuthService().currentUser;
 
     if (user != null) {
       activityRepository = FirestoreActivityRepository(userId: user.uid);
       activityItemsStream = activityRepository!.watchActivityItems(
-        widget.activity.id,
+        activity.id,
       );
     }
   }
@@ -46,7 +49,10 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            _Header(title: widget.activity.name),
+            _Header(
+              title: activity.name,
+              onEdit: activity.isCompleted ? null : _editActivity,
+            ),
             Expanded(child: _buildContent()),
           ],
         ),
@@ -87,7 +93,7 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
         return ListView(
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 30),
           children: [
-            _ActivityInfo(activity: widget.activity),
+            _ActivityInfo(activity: activity),
 
             const SizedBox(height: 24),
 
@@ -104,7 +110,7 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
                   '${items.length == 1 ? 'item' : 'items'}',
                   style: AppTextStyles.body,
                 ),
-                if (!widget.activity.isCompleted) ...[
+                if (!activity.isCompleted) ...[
                   const SizedBox(width: 10),
                   _ItemManagementButton(
                     enabled: !isManagingItems,
@@ -128,7 +134,7 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
                   padding: const EdgeInsets.only(bottom: 12),
                   child: _ActivityItemCard(
                     item: item,
-                    onRemove: widget.activity.isUpcoming && !isManagingItems
+                    onRemove: activity.isUpcoming && !isManagingItems
                         ? () {
                             _confirmRemoveItem(item);
                           }
@@ -140,7 +146,7 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
             const SizedBox(height: 14),
 
             _ActionButton(
-              activity: widget.activity,
+              activity: activity,
               onPressed: isManagingItems ? null : _handleAction,
             ),
           ],
@@ -150,7 +156,7 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
   }
 
   Future<void> _addItems(List<ActivityItem> existingItems) async {
-    if (isManagingItems || widget.activity.isCompleted) {
+    if (isManagingItems || activity.isCompleted) {
       return;
     }
 
@@ -175,7 +181,7 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
 
     try {
       await activityRepository!.addItemsToActivity(
-        activityId: widget.activity.id,
+        activityId: activity.id,
         items: selectedItems,
       );
 
@@ -204,7 +210,7 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
   }
 
   Future<void> _confirmRemoveItem(ActivityItem item) async {
-    if (isManagingItems || !widget.activity.isUpcoming) {
+    if (isManagingItems || !activity.isUpcoming) {
       return;
     }
 
@@ -245,7 +251,7 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
 
     try {
       await activityRepository!.removeItemFromActivity(
-        activityId: widget.activity.id,
+        activityId: activity.id,
         itemId: item.itemId,
       );
 
@@ -275,13 +281,36 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
     );
   }
 
+  Future<void> _editActivity() async {
+    if (activity.isCompleted) {
+      return;
+    }
+
+    final updatedActivity = await Navigator.push<model.Activity>(
+      context,
+      MaterialPageRoute(
+        builder: (context) {
+          return EditActivityScreen(activity: activity);
+        },
+      ),
+    );
+
+    if (!mounted || updatedActivity == null) {
+      return;
+    }
+
+    setState(() {
+      activity = updatedActivity;
+    });
+  }
+
   Future<void> _handleAction() async {
-    if (widget.activity.status == 'UPCOMING') {
+    if (activity.status == 'UPCOMING') {
       final completed = await Navigator.push<bool>(
         context,
         MaterialPageRoute(
           builder: (context) {
-            return ActivityCheckScreen(activity: widget.activity);
+            return ActivityCheckScreen(activity: activity);
           },
         ),
       );
@@ -297,12 +326,12 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
       return;
     }
 
-    if (widget.activity.status == 'ACTIVE') {
+    if (activity.status == 'ACTIVE') {
       final completed = await Navigator.push<bool>(
         context,
         MaterialPageRoute(
           builder: (context) {
-            return ActivityReturnCheckScreen(activity: widget.activity);
+            return ActivityReturnCheckScreen(activity: activity);
           },
         ),
       );
@@ -322,7 +351,7 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
       context,
       MaterialPageRoute(
         builder: (context) {
-          return ActivityCheckResultsScreen(activity: widget.activity);
+          return ActivityCheckResultsScreen(activity: activity);
         },
       ),
     );
@@ -331,8 +360,9 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
 
 class _Header extends StatelessWidget {
   final String title;
+  final VoidCallback? onEdit;
 
-  const _Header({required this.title});
+  const _Header({required this.title, this.onEdit});
 
   @override
   Widget build(BuildContext context) {
@@ -365,6 +395,23 @@ class _Header extends StatelessWidget {
               style: AppTextStyles.heading.copyWith(fontSize: 21),
             ),
           ),
+
+          if (onEdit != null)
+            Tooltip(
+              message: 'Edit Activity',
+              child: GestureDetector(
+                onTap: onEdit,
+                child: const SizedBox(
+                  width: 42,
+                  height: 42,
+                  child: Icon(
+                    Icons.edit_outlined,
+                    color: AppColors.ink,
+                    size: 22,
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
