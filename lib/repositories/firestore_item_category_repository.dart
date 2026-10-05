@@ -22,8 +22,14 @@ class FirestoreItemCategoryRepository implements ItemCategoryRepository {
 
   @override
   Stream<List<ItemCategory>> watchCustomCategories() {
-    return _categoriesCollection.orderBy('name').snapshots().map((snapshot) {
-      return snapshot.docs.map(_categoryFromDocument).toList();
+    return _categoriesCollection.snapshots().map((snapshot) {
+      final categories = snapshot.docs.map(_categoryFromDocument).toList();
+
+      categories.sort((a, b) {
+        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      });
+
+      return categories;
     });
   }
 
@@ -32,27 +38,46 @@ class FirestoreItemCategoryRepository implements ItemCategoryRepository {
     final name = ItemCategory.validateCustomName(value);
     final documentId = ItemCategory.documentIdForCustomName(name);
     final document = _categoriesCollection.doc(documentId);
-    final existing = await document.get();
 
-    if (existing.exists) {
-      throw StateError('A category named "$name" already exists.');
+    return firestore.runTransaction((transaction) async {
+      final existing = await transaction.get(document);
+
+      if (existing.exists) {
+        throw StateError('A category named "$name" already exists.');
+      }
+
+      final now = DateTime.now();
+      final category = ItemCategory(
+        id: documentId,
+        name: name,
+        createdAt: now,
+        updatedAt: now,
+      );
+
+      transaction.set(document, {
+        'name': category.name,
+        'createdAt': Timestamp.fromDate(now),
+        'updatedAt': Timestamp.fromDate(now),
+      });
+
+      return category;
+    });
+  }
+
+  @override
+  Future<bool> categoryExists(String name) async {
+    if (ItemCategory.isBuiltInName(name)) {
+      return true;
     }
 
-    final now = DateTime.now();
-    final category = ItemCategory(
-      id: documentId,
-      name: name,
-      createdAt: now,
-      updatedAt: now,
-    );
+    try {
+      final documentId = ItemCategory.documentIdForCustomName(name);
+      final document = await _categoriesCollection.doc(documentId).get();
 
-    await document.set({
-      'name': category.name,
-      'createdAt': Timestamp.fromDate(now),
-      'updatedAt': Timestamp.fromDate(now),
-    });
-
-    return category;
+      return document.exists;
+    } on ArgumentError {
+      return false;
+    }
   }
 
   @override

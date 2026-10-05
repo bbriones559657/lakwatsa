@@ -220,6 +220,8 @@ class _ManageCategoriesScreenState extends State<ManageCategoriesScreen> {
                           child: TextField(
                             controller: nameController,
                             enabled: !isSaving,
+                            maxLength: ItemCategory.maxNameLength,
+                            textCapitalization: TextCapitalization.words,
                             textInputAction: TextInputAction.done,
                             onSubmitted: (_) {
                               _addCategory();
@@ -227,6 +229,7 @@ class _ManageCategoriesScreenState extends State<ManageCategoriesScreen> {
                             style: AppTextStyles.bodyBold.copyWith(fontSize: 13),
                             decoration: InputDecoration(
                               hintText: 'Example: Travel Gear',
+                              counterText: '',
                               hintStyle: AppTextStyles.body.copyWith(
                                 fontSize: 13,
                               ),
@@ -314,6 +317,14 @@ class _ManageCategoriesScreenState extends State<ManageCategoriesScreen> {
                           style: AppTextStyles.body.copyWith(fontSize: 12),
                         ),
                       ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Custom categories can be removed only when no My Item uses them.',
+                      style: AppTextStyles.body.copyWith(
+                        color: AppColors.muted,
+                        fontSize: 11,
+                      ),
                     ),
                     const SizedBox(height: 8),
                     if (customCategories.isEmpty)

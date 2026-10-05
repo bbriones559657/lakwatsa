@@ -321,15 +321,18 @@ service cloud.firestore {
         && validCheckResultManifest(uid, activityId, d);
     }
 
-    function validCustomItemCategory(d) {
+    function validCustomItemCategory(d, categoryId) {
       return d.keys().hasOnly(['name', 'createdAt', 'updatedAt'])
         && d.keys().hasAll(['name', 'createdAt', 'updatedAt'])
         && d.name is string
         && d.name.size() > 0
         && d.name.size() <= 40
-        && !(d.name in [
-          'All', 'Electronics', 'Documents', 'Clothing', 'Toiletries', 'Other'
+        && d.name == d.name.trim()
+        && categoryId == d.name.lower()
+        && !(d.name.lower() in [
+          'all', 'electronics', 'documents', 'clothing', 'toiletries', 'other'
         ])
+        && !(d.name in ['.', '..'])
         && d.createdAt is timestamp
         && d.updatedAt is timestamp
         && d.updatedAt == d.createdAt;
@@ -341,7 +344,7 @@ service cloud.firestore {
       match /categories/{categoryId} {
         allow read: if owner(uid);
         allow create: if owner(uid)
-          && validCustomItemCategory(request.resource.data);
+          && validCustomItemCategory(request.resource.data, categoryId);
         // Category names are immutable because Items store the name snapshot.
         allow update: if false;
         allow delete: if owner(uid);

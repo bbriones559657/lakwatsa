@@ -76,6 +76,28 @@ class _AddItemScreenState extends State<AddItemScreen> {
     );
   }
 
+  Future<bool> _selectedCategoryIsAvailable() async {
+    if (ItemCategory.isBuiltInName(selectedCategory)) {
+      return true;
+    }
+
+    final originalCategory = widget.item?.category;
+
+    if (widget.isEditing && originalCategory == selectedCategory) {
+      // Existing Items keep their stored category snapshot even if its custom
+      // category definition was later removed.
+      return true;
+    }
+
+    final repository = categoryRepository;
+
+    if (repository == null) {
+      return false;
+    }
+
+    return repository.categoryExists(selectedCategory);
+  }
+
   Future<void> _saveItem() async {
     final itemName = itemNameController.text.trim();
 
@@ -94,6 +116,26 @@ class _AddItemScreenState extends State<AddItemScreen> {
         context,
       ).showSnackBar(const SnackBar(content: Text('You must be signed in.')));
 
+      return;
+    }
+
+    if (!await _selectedCategoryIsAvailable()) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'That category is no longer available. Choose another category.',
+          ),
+        ),
+      );
+
+      return;
+    }
+
+    if (!mounted) {
       return;
     }
 
@@ -116,7 +158,9 @@ class _AddItemScreenState extends State<AddItemScreen> {
           name: itemName,
           category: selectedCategory,
           quantity: quantity,
-          icon: _getIconKey(selectedCategory),
+          icon: selectedCategory == oldItem.category
+              ? oldItem.icon
+              : _getIconKey(selectedCategory),
           photoUrl: oldItem.photoUrl,
 
           // Important:
@@ -469,6 +513,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
       return _CategoryDropdown(
         value: selectedCategory,
         categories: _categoryNames(const []),
+        unavailableValue: _isUnavailableSelection(const []),
         onChanged: _selectCategory,
       );
     }
@@ -477,30 +522,89 @@ class _AddItemScreenState extends State<AddItemScreen> {
       stream: repository.watchCustomCategories(),
       builder: (context, snapshot) {
         final customCategories = snapshot.data ?? [];
+        final unavailableValue = snapshot.hasData && !snapshot.hasError
+            ? _isUnavailableSelection(customCategories)
+            : null;
 
-        return _CategoryDropdown(
-          value: selectedCategory,
-          categories: _categoryNames(customCategories),
-          onChanged: _selectCategory,
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _CategoryDropdown(
+              value: selectedCategory,
+              categories: _categoryNames(customCategories),
+              unavailableValue: unavailableValue,
+              onChanged: _selectCategory,
+            ),
+            if (snapshot.hasError) ...[
+              const SizedBox(height: 6),
+              Text(
+                'Custom categories could not be refreshed. Built-in and '
+                'current categories are still shown.',
+                style: AppTextStyles.body.copyWith(
+                  color: AppColors.muted,
+                  fontSize: 11,
+                ),
+              ),
+            ] else if (unavailableValue != null) ...[
+              const SizedBox(height: 6),
+              Text(
+                'This category was removed. Choose another category before saving.',
+                style: AppTextStyles.body.copyWith(
+                  color: AppColors.muted,
+                  fontSize: 11,
+                ),
+              ),
+            ],
+          ],
         );
       },
     );
   }
 
   List<String> _categoryNames(List<ItemCategory> customCategories) {
-    final names = <String>{...ItemCategory.builtInNames};
+    final names = <String>[...ItemCategory.builtInNames];
+    final customNames = customCategories
+        .map((category) => category.name.trim())
+        .where((name) => name.isNotEmpty)
+        .toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
 
-    for (final category in customCategories) {
-      final name = category.name.trim();
-
-      if (name.isNotEmpty) {
+    for (final name in customNames) {
+      if (!_containsCategoryName(names, name)) {
         names.add(name);
       }
     }
 
-    names.add(selectedCategory);
+    // DropdownButton requires the selected value to exactly match one item.
+    // Keep an existing Item's legacy casing even if it matches a built-in name
+    // case-insensitively.
+    if (!names.contains(selectedCategory)) {
+      names.add(selectedCategory);
+    }
 
-    return names.toList();
+    return names;
+  }
+
+  String? _isUnavailableSelection(List<ItemCategory> customCategories) {
+    if (ItemCategory.isBuiltInName(selectedCategory)) {
+      return null;
+    }
+
+    if (widget.isEditing && widget.item?.category == selectedCategory) {
+      return null;
+    }
+
+    final available = customCategories.any(
+      (category) => category.name == selectedCategory,
+    );
+
+    return available ? null : selectedCategory;
+  }
+
+  bool _containsCategoryName(List<String> names, String candidate) {
+    final normalized = candidate.trim().toLowerCase();
+
+    return names.any((name) => name.trim().toLowerCase() == normalized);
   }
 
   void _selectCategory(String value) {
@@ -565,14 +669,16 @@ class _AddItemScreenState extends State<AddItemScreen> {
                       children: [
                         const _FieldLabel('Category'),
                         const Spacer(),
-                        GestureDetector(
-                          onTap: _openCategoryManager,
+                        TextButton(
+                          onPressed: _openCategoryManager,
+                          style: TextButton.styleFrom(
+                            minimumSize: const Size(48, 40),
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            foregroundColor: AppColors.green,
+                          ),
                           child: Text(
                             'Manage',
-                            style: AppTextStyles.bodyBold.copyWith(
-                              color: AppColors.green,
-                              fontSize: 12,
-                            ),
+                            style: AppTextStyles.bodyBold.copyWith(fontSize: 12),
                           ),
                         ),
                       ],
@@ -875,11 +981,13 @@ class _TextField extends StatelessWidget {
 class _CategoryDropdown extends StatelessWidget {
   final String value;
   final List<String> categories;
+  final String? unavailableValue;
   final ValueChanged<String> onChanged;
 
   const _CategoryDropdown({
     required this.value,
     required this.categories,
+    required this.unavailableValue,
     required this.onChanged,
   });
 
@@ -901,9 +1009,21 @@ class _CategoryDropdown extends StatelessWidget {
           style: AppTextStyles.bodyBold.copyWith(fontSize: 13),
           dropdownColor: AppColors.background,
           items: categories.map((category) {
+            final unavailable = category == unavailableValue;
+
             return DropdownMenuItem(
               value: category,
-              child: Text(category),
+              child: Text(
+                unavailable ? '$category (Unavailable)' : category,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: unavailable
+                    ? AppTextStyles.body.copyWith(
+                        color: AppColors.muted,
+                        fontSize: 13,
+                      )
+                    : null,
+              ),
             );
           }).toList(),
           onChanged: (value) {

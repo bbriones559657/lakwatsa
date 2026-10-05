@@ -191,6 +191,21 @@ test('custom Item categories are owner-only and schema-valid', async () => {
     createdAt: now,
     updatedAt: now,
   }));
+  await assertFails(setDoc(categoryRef(alice, 'electronics'), {
+    name: 'electronics',
+    createdAt: now,
+    updatedAt: now,
+  }));
+  await assertFails(setDoc(categoryRef(alice, 'wrong-id'), {
+    name: 'Travel Gear',
+    createdAt: now,
+    updatedAt: now,
+  }));
+  await assertFails(setDoc(categoryRef(alice, ' travel gear '), {
+    name: ' Travel Gear ',
+    createdAt: now,
+    updatedAt: now,
+  }));
   await assertFails(setDoc(categoryRef(alice, 'all'), {
     name: 'All',
     createdAt: now,

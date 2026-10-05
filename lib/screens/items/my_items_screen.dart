@@ -73,24 +73,10 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
     return StreamBuilder<List<ItemCategory>>(
       stream: categoryRepository!.watchCustomCategories(),
       builder: (context, categorySnapshot) {
-        if (categorySnapshot.hasError) {
-          return Center(
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Text(
-                'Failed to load categories.\n${categorySnapshot.error}',
-                textAlign: TextAlign.center,
-                style: AppTextStyles.body,
-              ),
-            ),
-          );
-        }
-
-        if (categorySnapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-
+        // My Items remains usable even if the optional custom-category stream
+        // is temporarily unavailable. Item snapshots still carry category names.
         final customCategories = categorySnapshot.data ?? [];
+        final categoryLoadFailed = categorySnapshot.hasError;
 
         return StreamBuilder<List<Item>>(
           stream: itemRepository!.watchItems(),
@@ -119,6 +105,16 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
                 : 'All';
             final filteredItems = _filterItems(allItems, activeCategory);
 
+            if (activeCategory != selectedCategory) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted && selectedCategory != 'All') {
+                  setState(() {
+                    selectedCategory = 'All';
+                  });
+                }
+              });
+            }
+
             return ListView(
               padding: const EdgeInsets.only(bottom: 24),
               children: [
@@ -138,6 +134,19 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
                     });
                   },
                 ),
+
+                if (categoryLoadFailed)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+                    child: Text(
+                      'Custom categories could not be refreshed. '
+                      'Your Items are still available.',
+                      style: AppTextStyles.body.copyWith(
+                        color: AppColors.muted,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
 
                 const SizedBox(height: 12),
 
@@ -165,16 +174,32 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
     List<ItemCategory> customCategories,
     List<Item> items,
   ) {
-    final names = <String>{
-      'All',
-      ...ItemCategory.builtInNames,
-      ...customCategories.map((category) => category.name),
-      ...items.map((item) => item.category),
-    };
+    final names = <String>['All', ...ItemCategory.builtInNames];
+    final customNames = customCategories
+        .map((category) => category.name.trim())
+        .where((name) => name.isNotEmpty)
+        .toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    final legacyNames = items
+        .map((item) => item.category.trim())
+        .where((name) => name.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
 
-    names.removeWhere((name) => name.trim().isEmpty);
+    for (final name in [...customNames, ...legacyNames]) {
+      if (!_containsCategoryName(names, name)) {
+        names.add(name);
+      }
+    }
 
-    return names.toList();
+    return names;
+  }
+
+  bool _containsCategoryName(List<String> names, String candidate) {
+    final normalized = candidate.trim().toLowerCase();
+
+    return names.any((name) => name.trim().toLowerCase() == normalized);
   }
 
   List<Item> _filterItems(List<Item> items, String activeCategory) {
@@ -184,22 +209,14 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
       final matchesSearch =
           search.isEmpty || item.name.toLowerCase().contains(search);
 
-      final matchesCategory =
-          activeCategory == 'All' || item.category == activeCategory;
+      final matchesCategory = activeCategory == 'All' ||
+          _sameCategoryName(item.category, activeCategory);
 
       return matchesSearch && matchesCategory;
     }).toList();
   }
 
   List<Widget> _buildSections(List<Item> items, List<String> categories) {
-    final Map<String, List<Item>> groupedItems = {};
-
-    for (final item in items) {
-      groupedItems.putIfAbsent(item.category, () => []);
-
-      groupedItems[item.category]!.add(item);
-    }
-
     final widgets = <Widget>[];
 
     for (final category in categories) {
@@ -207,26 +224,22 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
         continue;
       }
 
-      final categoryItems = groupedItems[category];
+      final categoryItems = items
+          .where((item) => _sameCategoryName(item.category, category))
+          .toList();
 
-      if (categoryItems == null || categoryItems.isEmpty) {
+      if (categoryItems.isEmpty) {
         continue;
       }
 
       widgets.add(_ItemSection(title: category, items: categoryItems));
     }
 
-    // Handles categories that may exist in Firestore
-    // but are not currently in our category list.
-    for (final entry in groupedItems.entries) {
-      if (categories.contains(entry.key)) {
-        continue;
-      }
-
-      widgets.add(_ItemSection(title: entry.key, items: entry.value));
-    }
-
     return widgets;
+  }
+
+  bool _sameCategoryName(String a, String b) {
+    return a.trim().toLowerCase() == b.trim().toLowerCase();
   }
 
   Future<void> _openAddItem() async {
@@ -330,13 +343,19 @@ class _Header extends StatelessWidget {
 
           _HeaderButton(
             icon: Icons.category_outlined,
+            label: 'Manage categories',
             filled: false,
             onTap: onCategories,
           ),
 
           const SizedBox(width: 10),
 
-          _HeaderButton(text: '+', filled: true, onTap: onAdd),
+          _HeaderButton(
+            text: '+',
+            label: 'Add item',
+            filled: true,
+            onTap: onAdd,
+          ),
         ],
       ),
     );
@@ -346,45 +365,56 @@ class _Header extends StatelessWidget {
 class _HeaderButton extends StatelessWidget {
   final String? text;
   final IconData? icon;
+  final String label;
   final bool filled;
   final VoidCallback onTap;
 
   const _HeaderButton({
     this.text,
     this.icon,
+    required this.label,
     required this.filled,
     required this.onTap,
   }) : assert(text != null || icon != null);
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 36,
-        height: 36,
-        decoration: BoxDecoration(
-          color: filled ? AppColors.ink : AppColors.background,
-          border: Border.all(color: AppColors.ink, width: 2.5),
-          borderRadius: BorderRadius.circular(4),
-          boxShadow: filled
-              ? const [BoxShadow(color: AppColors.green, offset: Offset(3, 3))]
-              : null,
+    return Tooltip(
+      message: label,
+      child: Semantics(
+        button: true,
+        label: label,
+        child: GestureDetector(
+          onTap: onTap,
+          child: Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: filled ? AppColors.ink : AppColors.background,
+              border: Border.all(color: AppColors.ink, width: 2.5),
+              borderRadius: BorderRadius.circular(4),
+              boxShadow: filled
+                  ? const [
+                      BoxShadow(color: AppColors.green, offset: Offset(3, 3)),
+                    ]
+                  : null,
+            ),
+            alignment: Alignment.center,
+            child: icon != null
+                ? Icon(
+                    icon,
+                    color: filled ? AppColors.background : AppColors.ink,
+                    size: 19,
+                  )
+                : Text(
+                    text!,
+                    style: AppTextStyles.bodyBold.copyWith(
+                      color: filled ? AppColors.background : AppColors.ink,
+                      fontSize: text == '+' ? 20 : 14,
+                    ),
+                  ),
+          ),
         ),
-        alignment: Alignment.center,
-        child: icon != null
-            ? Icon(
-                icon,
-                color: filled ? AppColors.background : AppColors.ink,
-                size: 19,
-              )
-            : Text(
-                text!,
-                style: AppTextStyles.bodyBold.copyWith(
-                  color: filled ? AppColors.background : AppColors.ink,
-                  fontSize: text == '+' ? 20 : 14,
-                ),
-              ),
       ),
     );
   }

@@ -5,6 +5,8 @@ abstract class ItemCategoryRepository {
 
   Future<ItemCategory> addCategory(String name);
 
+  Future<bool> categoryExists(String name);
+
   Future<bool> isCategoryInUse(String name);
 
   Future<void> deleteCategory(ItemCategory category);
