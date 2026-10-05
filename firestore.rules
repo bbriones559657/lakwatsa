@@ -32,13 +32,11 @@ service cloud.firestore {
         && getAfter(activityPath(uid, activityId)).data.status == toStatus(checkId);
     }
     function hasActivityItemState(d) {
-      return d.keys().hasAll(['itemCount', 'itemRevision'])
+      return d.keys().hasAll(['itemCount', 'itemRevision', 'itemManifest'])
         && d.itemCount is int && d.itemCount >= 1 && d.itemCount <= 200
-        && d.itemRevision is int && d.itemRevision >= 0;
-    }
-    function hasNoActivityItemState(d) {
-      return !d.keys().hasAll(['itemCount'])
-        && !d.keys().hasAll(['itemRevision']);
+        && d.itemRevision is int && d.itemRevision >= 0
+        && d.itemManifest is map
+        && d.itemManifest.size() == d.itemCount;
     }
     function hasActivityItemMutation(d) {
       return d.keys().hasAll(['itemMutationId', 'itemMutationType'])
@@ -57,9 +55,10 @@ service cloud.firestore {
         && d.keys().hasOnly([
           'listId', 'name', 'type', 'activityDate', 'startAt', 'endAt',
           'reminderEnabled', 'reminderMinutes', 'status', 'createdAt', 'updatedAt',
-          'itemCount', 'itemRevision', 'itemMutationId', 'itemMutationType'
+          'itemCount', 'itemRevision', 'itemManifest',
+          'itemMutationId', 'itemMutationType'
         ])
-        && (hasActivityItemState(d) || hasNoActivityItemState(d))
+        && hasActivityItemState(d)
         && (hasActivityItemMutation(d) || hasNoActivityItemMutation(d))
         && d.listId is string && d.name is string
         && d.name.size() > 0 && d.name.size() <= 100
@@ -72,9 +71,22 @@ service cloud.firestore {
         && d.status in ['UPCOMING', 'ACTIVE', 'COMPLETED']
         && d.createdAt is timestamp && d.updatedAt is timestamp;
     }
-    function metadataOnly() {
-      let changed = request.resource.data.diff(resource.data).affectedKeys();
-      return request.resource.data.name is string
+    function metadataOnly(changed) {
+      // Reject non-metadata updates before evaluating the field validators below.
+      // This keeps unrelated Activity mutations well below the rules expression cap.
+      return (
+          (resource.data.status == 'UPCOMING'
+            && changed.hasOnly([
+              'name', 'type', 'activityDate', 'startAt', 'endAt',
+              'reminderEnabled', 'reminderMinutes', 'updatedAt'
+            ]))
+          || (resource.data.status == 'ACTIVE'
+            && changed.hasOnly([
+              'name', 'type', 'endAt',
+              'reminderEnabled', 'reminderMinutes', 'updatedAt'
+            ]))
+        )
+        && request.resource.data.name is string
         && request.resource.data.name.size() > 0
         && request.resource.data.name.size() <= 100
         && request.resource.data.type is string
@@ -88,61 +100,86 @@ service cloud.firestore {
         && request.resource.data.reminderMinutes is int
         && request.resource.data.reminderMinutes >= 0
         && request.resource.data.reminderMinutes <= 1440
-        && request.resource.data.updatedAt is timestamp
-        && (
-          (resource.data.status == 'UPCOMING'
-            && changed.hasOnly([
-              'name', 'type', 'activityDate', 'startAt', 'endAt',
-              'reminderEnabled', 'reminderMinutes', 'updatedAt'
-            ]))
-          || (resource.data.status == 'ACTIVE'
-            && changed.hasOnly([
-              'name', 'type', 'endAt',
-              'reminderEnabled', 'reminderMinutes', 'updatedAt'
-            ]))
-        );
+        && request.resource.data.updatedAt is timestamp;
     }
-    function initializesItemState() {
-      let changed = request.resource.data.diff(resource.data).affectedKeys();
-      return resource.data.status in ['UPCOMING', 'ACTIVE']
-        && hasNoActivityItemState(resource.data)
-        && hasActivityItemState(request.resource.data)
-        && request.resource.data.itemRevision == 0
-        && request.resource.data.updatedAt is timestamp
-        && changed.hasOnly(['itemCount', 'itemRevision', 'updatedAt']);
+    function manifestAddsOnlyItem(beforeData, afterData, itemId) {
+      return afterData.itemManifest.size() == beforeData.itemManifest.size() + 1
+        && afterData.itemManifest.diff(beforeData.itemManifest)
+          .affectedKeys() == [itemId].toSet();
     }
-    function changesItemState(uid, activityId) {
-      let changed = request.resource.data.diff(resource.data).affectedKeys();
+    function manifestRemovesOnlyItem(beforeData, afterData, itemId) {
+      return afterData.itemManifest.size() == beforeData.itemManifest.size() - 1
+        && afterData.itemManifest.diff(beforeData.itemManifest)
+          .affectedKeys() == [itemId].toSet();
+    }
+    function beforeDraftTracksRemoval(uid, activityId, itemId) {
+      let draftPath = checkPath(uid, activityId, 'draft_before_activity');
+      return !exists(draftPath)
+        || (existsAfter(draftPath)
+          && getAfter(draftPath).data.itemRevision
+            == request.resource.data.itemRevision
+          && !getAfter(draftPath).data.foundMethods.keys().hasAny([itemId]));
+    }
+    function changesItemState(uid, activityId, changed) {
       let itemId = request.resource.data.get('itemMutationId', '__none__');
       let itemPath = activityItemPath(uid, activityId, itemId);
-      return resource.data.status in ['UPCOMING', 'ACTIVE']
-        && hasActivityItemState(resource.data)
-        && hasActivityItemState(request.resource.data)
-        && hasActivityItemMutation(request.resource.data)
+      // Gate on the mutation-shaped diff before the manifest/document checks.
+      return changed.hasOnly([
+          'itemCount', 'itemRevision', 'itemManifest',
+          'itemMutationId', 'itemMutationType', 'updatedAt'
+        ])
+        && resource.data.status in ['UPCOMING', 'ACTIVE']
         && request.resource.data.itemRevision == resource.data.itemRevision + 1
         && request.resource.data.updatedAt is timestamp
-        && changed.hasOnly([
-          'itemCount', 'itemRevision', 'itemMutationId', 'itemMutationType', 'updatedAt'
-        ])
+        && hasActivityItemMutation(request.resource.data)
+        && hasActivityItemState(resource.data)
+        && hasActivityItemState(request.resource.data)
         && ((request.resource.data.itemMutationType == 'ADD'
             && request.resource.data.itemCount == resource.data.itemCount + 1
-            && !exists(itemPath) && existsAfter(itemPath))
+            && manifestAddsOnlyItem(resource.data, request.resource.data, itemId)
+            && !exists(itemPath) && existsAfter(itemPath)
+            && request.resource.data.itemManifest[itemId]
+              == getAfter(itemPath).data)
           || (request.resource.data.itemMutationType == 'REMOVE'
             && resource.data.status == 'UPCOMING'
             && resource.data.itemCount > 1
             && request.resource.data.itemCount == resource.data.itemCount - 1
-            && exists(itemPath) && !existsAfter(itemPath)));
+            && manifestRemovesOnlyItem(resource.data, request.resource.data, itemId)
+            && beforeDraftTracksRemoval(uid, activityId, itemId)
+            && (!exists(itemPath) || !existsAfter(itemPath))));
     }
-    function completesCheck(uid, activityId, checkId) {
-      return resource.data.status == fromStatus(checkId)
+    function completedCheckMatches(uid, activityId, checkId) {
+      let completed = getAfter(checkPath(uid, activityId, checkId)).data;
+      return completed.type == checkType(checkId)
+        && completed.status == 'COMPLETED'
+        && completed.itemCount == resource.data.itemCount
+        && completed.itemRevision == resource.data.itemRevision
+        && completed.itemIds.toSet() == resource.data.itemManifest.keys().toSet();
+    }
+    function completesCheck(uid, activityId, checkId, changed) {
+      return changed.hasOnly(['status', 'updatedAt'])
+        && resource.data.status == fromStatus(checkId)
         && request.resource.data.status == toStatus(checkId)
-        && hasActivityItemState(resource.data)
         && request.resource.data.updatedAt is timestamp
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
-        && getAfter(checkPath(uid, activityId, checkId)).data.type == checkType(checkId)
-        && getAfter(checkPath(uid, activityId, checkId)).data.status == 'COMPLETED'
-        && getAfter(checkPath(uid, activityId, checkId)).data.itemCount == resource.data.itemCount
-        && getAfter(checkPath(uid, activityId, checkId)).data.itemRevision == resource.data.itemRevision;
+        && hasActivityItemState(resource.data)
+        && existsAfter(checkPath(uid, activityId, checkId))
+        && completedCheckMatches(uid, activityId, checkId);
+    }
+
+    function activityUpdateAllowed(uid, activityId) {
+      // Route by status before evaluating unrelated update policies. A check
+      // transition must not traverse metadata and Item mutation validators
+      // before its own manifest/count verification.
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return request.resource.data.status == resource.data.status
+        ? (metadataOnly(changed)
+          || changesItemState(uid, activityId, changed))
+        : ((resource.data.status == 'UPCOMING'
+            && request.resource.data.status == 'ACTIVE'
+            && completesCheck(uid, activityId, 'before_activity', changed))
+          || (resource.data.status == 'ACTIVE'
+            && request.resource.data.status == 'COMPLETED'
+            && completesCheck(uid, activityId, 'return', changed)));
     }
     function validActivityItem(d, itemId) {
       return d.keys().hasAll([
@@ -161,11 +198,28 @@ service cloud.firestore {
         && (d.qrCode == null || d.qrCode is string)
         && d.addedDuringActivity is bool && d.createdAt is timestamp;
     }
-    function initialActivityItemCreate(uid, activityId, d) {
+    function initialManifestItemMatches(uid, activityId, itemId, item) {
+      let created = getAfter(activityItemPath(uid, activityId, itemId)).data;
+      return validActivityItem(created, itemId)
+        && created == item
+        && !created.addedDuringActivity;
+    }
+    function hasRealInitialItem(uid, activityId, d) {
+      let firstId = d.itemManifest.keys()[0];
+      return existsAfter(activityItemPath(uid, activityId, firstId))
+        && initialManifestItemMatches(
+          uid, activityId, firstId, d.itemManifest[firstId]
+        );
+    }
+    function initialActivityItemCreate(uid, activityId, itemId, d) {
+      let parent = getAfter(activityPath(uid, activityId)).data;
       return !exists(activityPath(uid, activityId))
         && existsAfter(activityPath(uid, activityId))
-        && getAfter(activityPath(uid, activityId)).data.status == 'UPCOMING'
-        && getAfter(activityPath(uid, activityId)).data.itemRevision == 0
+        && hasActivityItemState(parent)
+        && parent.status == 'UPCOMING'
+        && parent.itemRevision == 0
+        && itemId in parent.itemManifest.keys()
+        && d == parent.itemManifest[itemId]
         && d.addedDuringActivity == false;
     }
     function trackedActivityItemCreate(uid, activityId, itemId, d) {
@@ -175,6 +229,7 @@ service cloud.firestore {
           == get(activityPath(uid, activityId)).data.itemRevision + 1
         && getAfter(activityPath(uid, activityId)).data.get('itemMutationId', '__none__') == itemId
         && getAfter(activityPath(uid, activityId)).data.get('itemMutationType', 'NONE') == 'ADD'
+        && getAfter(activityPath(uid, activityId)).data.itemManifest[itemId] == d
         && ((get(activityPath(uid, activityId)).data.status == 'UPCOMING'
             && d.addedDuringActivity == false)
           || (get(activityPath(uid, activityId)).data.status == 'ACTIVE'
@@ -186,27 +241,35 @@ service cloud.firestore {
         && getAfter(activityPath(uid, activityId)).data.itemRevision
           == get(activityPath(uid, activityId)).data.itemRevision + 1
         && getAfter(activityPath(uid, activityId)).data.get('itemMutationId', '__none__') == itemId
-        && getAfter(activityPath(uid, activityId)).data.get('itemMutationType', 'NONE') == 'REMOVE';
+        && getAfter(activityPath(uid, activityId)).data.get('itemMutationType', 'NONE') == 'REMOVE'
+        && !(itemId in getAfter(activityPath(uid, activityId)).data.itemManifest.keys());
     }
     function validDraft(d, checkId) {
       return d.keys().hasOnly([
-          'type', 'checkType', 'status', 'startedAt', 'foundMethods', 'updatedAt'
+          'type', 'checkType', 'status', 'startedAt', 'foundMethods',
+          'itemRevision', 'updatedAt'
         ])
         && d.keys().hasAll([
-          'type', 'checkType', 'status', 'startedAt', 'foundMethods', 'updatedAt'
+          'type', 'checkType', 'status', 'startedAt', 'foundMethods',
+          'itemRevision', 'updatedAt'
         ])
         && d.type == 'DRAFT' && d.status == 'IN_PROGRESS'
         && d.startedAt is timestamp && d.updatedAt is timestamp
         && d.foundMethods is map && d.foundMethods.size() <= 200
         && d.foundMethods.values().hasOnly(['MANUAL', 'QR'])
+        && d.itemRevision is int && d.itemRevision >= 0
         && ((checkId == 'draft_before_activity' && d.checkType == 'BEFORE_ACTIVITY')
           || (checkId == 'draft_return' && d.checkType == 'RETURN'));
     }
-    function draftStatusMatches(uid, activityId, checkId) {
-      return (checkId == 'draft_before_activity'
-          && getAfter(activityPath(uid, activityId)).data.status == 'UPCOMING')
-        || (checkId == 'draft_return'
-          && getAfter(activityPath(uid, activityId)).data.status == 'ACTIVE');
+    function draftStatusMatches(uid, activityId, checkId, d) {
+      let parent = getAfter(activityPath(uid, activityId)).data;
+      return hasActivityItemState(parent)
+        && d.itemRevision == parent.itemRevision
+        && parent.itemManifest.keys().toSet().hasAll(
+          d.foundMethods.keys().toSet()
+        )
+        && ((checkId == 'draft_before_activity' && parent.status == 'UPCOMING')
+          || (checkId == 'draft_return' && parent.status == 'ACTIVE'));
     }
     function draftClearedByCompletion(uid, activityId, checkId) {
       return (checkId == 'draft_before_activity'
@@ -214,29 +277,50 @@ service cloud.firestore {
         || (checkId == 'draft_return'
           && transitionsWithCheck(uid, activityId, 'return'));
     }
-    function validCompletedCheck(d, checkId) {
+    function validCheckResultManifest(uid, activityId, d) {
+      let parent = get(activityPath(uid, activityId)).data;
+      let allItems = d.itemIds.toSet();
+      let manualItems = d.manualItemIds.toSet();
+      let qrItems = d.qrItemIds.toSet();
+      let missingItems = d.missingItemIds.toSet();
+      return hasActivityItemState(parent)
+        && d.itemIds.size() == allItems.size()
+        && d.manualItemIds.size() == manualItems.size()
+        && d.qrItemIds.size() == qrItems.size()
+        && d.missingItemIds.size() == missingItems.size()
+        && allItems == parent.itemManifest.keys().toSet()
+        && allItems.hasAll(manualItems)
+        && allItems.hasAll(qrItems)
+        && allItems.hasAll(missingItems)
+        && manualItems.intersection(qrItems).size() == 0
+        && manualItems.intersection(missingItems).size() == 0
+        && qrItems.intersection(missingItems).size() == 0
+        && manualItems.size() + qrItems.size() + missingItems.size()
+          == allItems.size();
+    }
+    function validCompletedCheck(d, checkId, uid, activityId) {
       return beforeOrReturnCheck(checkId)
         && d.keys().hasOnly([
-          'type', 'startedAt', 'completedAt', 'status', 'itemCount', 'itemRevision'
+          'type', 'startedAt', 'completedAt', 'status', 'itemCount', 'itemRevision',
+          'itemIds', 'manualItemIds', 'qrItemIds', 'missingItemIds'
         ])
         && d.keys().hasAll([
-          'type', 'startedAt', 'completedAt', 'status', 'itemCount', 'itemRevision'
+          'type', 'startedAt', 'completedAt', 'status', 'itemCount', 'itemRevision',
+          'itemIds', 'manualItemIds', 'qrItemIds', 'missingItemIds'
         ])
         && d.type == checkType(checkId) && d.status == 'COMPLETED'
         && d.startedAt is timestamp && d.completedAt is timestamp
         && d.completedAt >= d.startedAt
         && d.itemCount is int && d.itemCount >= 1 && d.itemCount <= 200
-        && d.itemRevision is int && d.itemRevision >= 0;
+        && d.itemRevision is int && d.itemRevision >= 0
+        && d.itemIds is list
+        && d.manualItemIds is list
+        && d.qrItemIds is list
+        && d.missingItemIds is list
+        && d.itemCount == d.itemIds.size()
+        && validCheckResultManifest(uid, activityId, d);
     }
-    function validCompletedCheckItem(d, itemId) {
-      return d.keys().hasOnly(['activityItemId', 'status', 'method', 'checkedAt'])
-        && d.keys().hasAll(['activityItemId', 'status', 'method', 'checkedAt'])
-        && d.activityItemId == itemId
-        && ((d.status == 'FOUND'
-          && d.method in ['MANUAL', 'QR'] && d.checkedAt is timestamp)
-        || (d.status == 'NOT_FOUND'
-          && d.method == null && d.checkedAt == null));
-    }
+
 
     match /users/{uid} {
       allow read, write: if owner(uid);
@@ -255,15 +339,14 @@ service cloud.firestore {
         allow read: if owner(uid);
         allow create: if owner(uid)
           && validActivityDocument(request.resource.data)
-          && hasActivityItemState(request.resource.data)
           && request.resource.data.status == 'UPCOMING'
-          && request.resource.data.itemRevision == 0;
+          // With one initial Item, its child document can be verified in the
+          // same batch. Further Items use individually tracked mutations.
+          && request.resource.data.itemCount == 1
+          && request.resource.data.itemRevision == 0
+          && hasRealInitialItem(uid, activityId, request.resource.data);
         allow update: if owner(uid)
-          && (metadataOnly()
-            || initializesItemState()
-            || changesItemState(uid, activityId)
-            || completesCheck(uid, activityId, 'before_activity')
-            || completesCheck(uid, activityId, 'return'));
+          && activityUpdateAllowed(uid, activityId);
         // App deletion currently deletes only the parent and leaves subcollections.
         // Do not enable until a safe recursive cleanup flow exists.
         allow delete: if false;
@@ -271,7 +354,7 @@ service cloud.firestore {
           allow read: if owner(uid);
           // Every Item mutation is paired with the parent Activity item state.
           allow create: if owner(uid) && validActivityItem(request.resource.data, itemId)
-            && (initialActivityItemCreate(uid, activityId, request.resource.data)
+            && (initialActivityItemCreate(uid, activityId, itemId, request.resource.data)
               || trackedActivityItemCreate(uid, activityId, itemId, request.resource.data));
           allow update: if false;
           // Removing Items after Before Check would rewrite saved history.
@@ -283,22 +366,20 @@ service cloud.firestore {
           allow read: if owner(uid);
           allow create: if owner(uid)
             && ((validDraft(request.resource.data, checkId)
-                && draftStatusMatches(uid, activityId, checkId))
-              || (validCompletedCheck(request.resource.data, checkId)
+                && draftStatusMatches(uid, activityId, checkId, request.resource.data))
+              || (validCompletedCheck(request.resource.data, checkId, uid, activityId)
                 && transitionsWithCheck(uid, activityId, checkId)));
           allow update: if owner(uid)
             && checkId in ['draft_before_activity', 'draft_return']
             && validDraft(request.resource.data, checkId)
-            && draftStatusMatches(uid, activityId, checkId);
+            && draftStatusMatches(uid, activityId, checkId, request.resource.data);
           // A draft can be removed only as part of a status transition.
           allow delete: if owner(uid) && draftClearedByCompletion(uid, activityId, checkId);
           match /items/{itemId} {
+            // Legacy result rows remain readable. New completed checks store the
+            // complete, rules-verifiable result manifest on the check document.
             allow read: if owner(uid);
-            allow create: if owner(uid) && beforeOrReturnCheck(checkId)
-              && validCompletedCheckItem(request.resource.data, itemId)
-              && transitionsWithCheck(uid, activityId, checkId)
-              && getAfter(checkPath(uid, activityId, checkId)).data.type == checkType(checkId);
-            allow update, delete: if false;
+            allow write: if false;
           }
         }
       }

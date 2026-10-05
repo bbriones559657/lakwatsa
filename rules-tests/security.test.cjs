@@ -22,11 +22,28 @@ const checkRef = (db, id) => doc(db, `${base}/checks/${id}`);
 const checkItemRef = (db, id, itemId) => doc(db, `${base}/checks/${id}/items/${itemId}`);
 const activityItemRef = (db, itemId) => doc(db, `${base}/items/${itemId}`);
 
-const activity = (status = 'UPCOMING', itemCount = 1, itemRevision = 0) => ({
+const activityItem = (itemId = 'bottle', addedDuringActivity = false) => ({
+  itemId, itemName: itemId, category: 'Other', quantity: 1, icon: 'inventory',
+  photoUrl: null, qrCode: null, addedDuringActivity, createdAt: now,
+});
+const itemManifest = (itemIds, addedDuring = new Set()) => Object.fromEntries(
+  itemIds.map(itemId => [
+    itemId,
+    activityItem(itemId, addedDuring.has(itemId)),
+  ]),
+);
+const activity = (
+  status = 'UPCOMING', itemIds = ['bottle'], itemRevision = 0,
+) => ({
   listId: 'packing-list', name: 'Beach Trip', type: 'Trip',
   activityDate: now, startAt: now, endAt: later,
   reminderEnabled: false, reminderMinutes: 30,
-  status, itemCount, itemRevision, createdAt: now, updatedAt: now,
+  status,
+  itemCount: itemIds.length,
+  itemRevision,
+  itemManifest: itemManifest(itemIds),
+  createdAt: now,
+  updatedAt: now,
 });
 const legacyActivity = (status = 'UPCOMING') => ({
   listId: 'packing-list', name: 'Legacy Trip', type: 'Trip',
@@ -34,20 +51,32 @@ const legacyActivity = (status = 'UPCOMING') => ({
   reminderEnabled: false, reminderMinutes: 30,
   status, createdAt: now, updatedAt: now,
 });
-const activityItem = (itemId = 'bottle', addedDuringActivity = false) => ({
-  itemId, itemName: itemId, category: 'Other', quantity: 1, icon: 'inventory',
-  photoUrl: null, qrCode: null, addedDuringActivity, createdAt: now,
-});
-const draft = (checkType = 'BEFORE_ACTIVITY') => ({
+const draft = (
+  checkType = 'BEFORE_ACTIVITY', itemRevision = 0,
+  foundMethods = { bottle: 'MANUAL' },
+) => ({
   type: 'DRAFT', checkType, status: 'IN_PROGRESS',
-  startedAt: now, foundMethods: { bottle: 'MANUAL' }, updatedAt: now,
+  startedAt: now, foundMethods, itemRevision, updatedAt: now,
 });
-const completedCheck = (type, itemCount = 1, itemRevision = 0) => ({
+const completedCheck = (
+  type,
+  itemIds = ['bottle'],
+  itemRevision = 0,
+  { manualItemIds = itemIds, qrItemIds = [], missingItemIds = [] } = {},
+) => ({
   type, startedAt: now, completedAt: later, status: 'COMPLETED',
-  itemCount, itemRevision,
+  itemCount: itemIds.length,
+  itemRevision,
+  itemIds,
+  manualItemIds,
+  qrItemIds,
+  missingItemIds,
 });
-const checkedItem = (itemId = 'bottle') => ({
-  activityItemId: itemId, status: 'FOUND', method: 'MANUAL', checkedAt: later,
+const checkedItem = (itemId = 'bottle', method = 'MANUAL') => ({
+  activityItemId: itemId,
+  status: method == null ? 'NOT_FOUND' : 'FOUND',
+  method,
+  checkedAt: method == null ? null : later,
 });
 
 before(async () => {
@@ -68,10 +97,12 @@ beforeEach(async () => {
 async function seedActivity(status = 'UPCOMING', itemIds = ['bottle'], itemRevision = 0) {
   await environment.withSecurityRulesDisabled(async context => {
     const db = context.firestore();
-    await setDoc(activityRef(db), activity(status, itemIds.length, itemRevision));
+    const seed = writeBatch(db);
+    seed.set(activityRef(db), activity(status, itemIds, itemRevision));
     for (const itemId of itemIds) {
-      await setDoc(activityItemRef(db, itemId), activityItem(itemId));
+      seed.set(activityItemRef(db, itemId), activityItem(itemId));
     }
+    await seed.commit();
   });
 }
 function client(uid = 'alice') {
@@ -82,35 +113,39 @@ function transitionBatch(db, type, itemIds = ['bottle'], itemRevision = 0) {
   const id = isBefore ? 'before_activity' : 'return';
   const next = isBefore ? 'ACTIVE' : 'COMPLETED';
   const batch = writeBatch(db);
-  batch.set(checkRef(db, id), completedCheck(type, itemIds.length, itemRevision));
-  for (const itemId of itemIds) {
-    batch.set(checkItemRef(db, id, itemId), checkedItem(itemId));
-  }
+  batch.set(checkRef(db, id), completedCheck(type, itemIds, itemRevision));
   batch.update(activityRef(db), { status: next, updatedAt: later });
   batch.delete(checkRef(db, isBefore ? 'draft_before_activity' : 'draft_return'));
   return batch;
 }
 
 function trackedAddBatch(
-  db, itemId, { fromCount, fromRevision, addedDuringActivity = false },
+  db, itemId, { fromItemIds, fromRevision, addedDuringActivity = false },
 ) {
+  const addedDuring = new Set(addedDuringActivity ? [itemId] : []);
+  const nextIds = [...fromItemIds, itemId];
+  const nextManifest = itemManifest(fromItemIds);
+  nextManifest[itemId] = activityItem(itemId, addedDuringActivity);
   const batch = writeBatch(db);
   batch.update(activityRef(db), {
-    itemCount: fromCount + 1,
+    itemCount: nextIds.length,
     itemRevision: fromRevision + 1,
+    itemManifest: nextManifest,
     itemMutationId: itemId,
     itemMutationType: 'ADD',
     updatedAt: later,
   });
-  batch.set(activityItemRef(db, itemId), activityItem(itemId, addedDuringActivity));
+  batch.set(activityItemRef(db, itemId), activityItem(itemId, addedDuring.has(itemId)));
   return batch;
 }
 
-function trackedRemoveBatch(db, itemId, { fromCount, fromRevision }) {
+function trackedRemoveBatch(db, itemId, { fromItemIds, fromRevision }) {
+  const nextIds = fromItemIds.filter(id => id !== itemId);
   const batch = writeBatch(db);
   batch.update(activityRef(db), {
-    itemCount: fromCount - 1,
+    itemCount: nextIds.length,
     itemRevision: fromRevision + 1,
+    itemManifest: itemManifest(nextIds),
     itemMutationId: itemId,
     itemMutationType: 'REMOVE',
     updatedAt: later,
@@ -136,8 +171,74 @@ test('new Activities must start UPCOMING and belong to the caller', async () => 
   const alice = client();
   await assertFails(setDoc(activityRef(alice), activity('COMPLETED')));
   await assertFails(setDoc(activityRef(client('bob')), activity()));
-  await assertSucceeds(setDoc(activityRef(alice), activity()));
+  const initial = writeBatch(alice);
+  initial.set(activityRef(alice), activity());
+  initial.set(activityItemRef(alice, 'bottle'), activityItem());
+  await assertSucceeds(initial.commit());
   await assertFails(updateDoc(activityRef(alice), {status: 'COMPLETED'}));
+});
+
+test('Activity creation requires a non-empty authoritative Item manifest', async () => {
+  const alice = client();
+  const emptyManifest = { ...activity(), itemManifest: {} };
+  await assertFails(setDoc(activityRef(alice), emptyManifest));
+
+  const missingManifest = { ...activity() };
+  delete missingManifest.itemManifest;
+  await assertFails(setDoc(activityRef(alice), missingManifest));
+
+  // A forged parent manifest alone cannot establish a real initial Item.
+  await assertFails(setDoc(activityRef(alice), activity()));
+  const malformed = writeBatch(alice);
+  malformed.set(activityRef(alice), {
+    ...activity(), itemManifest: { bottle: null },
+  });
+  malformed.set(activityItemRef(alice, 'bottle'), activityItem());
+  await assertFails(malformed.commit());
+
+  const forgedSecond = writeBatch(alice);
+  forgedSecond.set(activityRef(alice), {
+    ...activity('UPCOMING', ['bottle', 'phone']),
+    itemManifest: { bottle: activityItem(), phone: null },
+  });
+  forgedSecond.set(activityItemRef(alice, 'bottle'), activityItem());
+  await assertFails(forgedSecond.commit());
+});
+
+test('completed check requires a complete atomic result manifest', async () => {
+  const alice = client();
+  const itemIds = ['bottle', 'phone', 'keys'];
+  await seedActivity('UPCOMING', itemIds, 0);
+
+  const incomplete = writeBatch(alice);
+  incomplete.set(
+    checkRef(alice, 'before_activity'),
+    completedCheck('BEFORE_ACTIVITY', itemIds, 0, {
+      manualItemIds: ['bottle', 'phone'],
+      qrItemIds: [],
+      missingItemIds: [],
+    }),
+  );
+  incomplete.update(activityRef(alice), { status: 'ACTIVE', updatedAt: later });
+  await assertFails(incomplete.commit());
+
+  // Completion is self-contained in the check document. Child result rows can
+  // be absent without making History incomplete because the app reads this
+  // verified manifest first.
+  const complete = writeBatch(alice);
+  complete.set(
+    checkRef(alice, 'before_activity'),
+    completedCheck('BEFORE_ACTIVITY', itemIds, 0, {
+      manualItemIds: ['bottle', 'phone'],
+      qrItemIds: [],
+      missingItemIds: ['keys'],
+    }),
+  );
+  complete.update(activityRef(alice), { status: 'ACTIVE', updatedAt: later });
+  await assertSucceeds(complete.commit());
+  const saved = (await getDoc(checkRef(alice, 'before_activity'))).data();
+  assert.deepEqual(new Set(saved.itemIds), new Set(itemIds));
+  assert.deepEqual(saved.missingItemIds, ['keys']);
 });
 
 test('drafts save while the matching check is active, but cannot forge history', async () => {
@@ -173,7 +274,7 @@ test('Return completion must be atomic and completed Activity is immutable', asy
   await assertSucceeds(trackedAddBatch(
     alice,
     'phone',
-    { fromCount: 1, fromRevision: 0, addedDuringActivity: true },
+    { fromItemIds: ['bottle'], fromRevision: 0, addedDuringActivity: true },
   ).commit());
   await assertSucceeds(transitionBatch(
     alice,
@@ -195,6 +296,29 @@ test('Activity with its initial Items can be created as a single batch', async (
   batch.set(activityRef(alice), activity());
   batch.set(activityItemRef(alice, 'bottle'), activityItem());
   await assertSucceeds(batch.commit());
+});
+
+test('a client can build a customized Activity through tracked Item additions', async () => {
+  const alice = client();
+  const initial = writeBatch(alice);
+  initial.set(activityRef(alice), activity());
+  initial.set(activityItemRef(alice, 'bottle'), activityItem());
+  await assertSucceeds(initial.commit());
+
+  await assertSucceeds(trackedAddBatch(
+    alice, 'phone', { fromItemIds: ['bottle'], fromRevision: 0 },
+  ).commit());
+  await assertSucceeds(trackedAddBatch(
+    alice, 'keys', { fromItemIds: ['bottle', 'phone'], fromRevision: 1 },
+  ).commit());
+  const current = (await getDoc(activityRef(alice))).data();
+  assert.equal(current.itemCount, 3);
+  assert.equal(current.itemRevision, 2);
+
+  await assertSucceeds(transitionBatch(
+    alice, 'BEFORE_ACTIVITY', ['bottle', 'phone', 'keys'], 2,
+  ).commit());
+  assert.equal((await getDoc(activityRef(alice))).data().status, 'ACTIVE');
 });
 
 test('Activity metadata edits are status-aware', async () => {
@@ -247,28 +371,30 @@ test('Activity Item management follows Activity status and timing', async () => 
   await assertSucceeds(trackedAddBatch(
     alice,
     'phone',
-    { fromCount: 1, fromRevision: 0 },
+    { fromItemIds: ['bottle'], fromRevision: 0 },
   ).commit());
 
   const wrongUpcoming = trackedAddBatch(
     alice,
     'wrong-upcoming',
-    { fromCount: 2, fromRevision: 1, addedDuringActivity: true },
+    { fromItemIds: ['bottle', 'phone'], fromRevision: 1, addedDuringActivity: true },
   );
   await assertFails(wrongUpcoming.commit());
 
   await assertSucceeds(setDoc(checkRef(alice, 'draft_before_activity'), {
-    ...draft(),
+    ...draft('BEFORE_ACTIVITY', 1),
     foundMethods: { bottle: 'MANUAL', phone: 'QR' },
   }));
   const removeWithDraft = writeBatch(alice);
   removeWithDraft.update(checkRef(alice, 'draft_before_activity'), {
     foundMethods: { bottle: 'MANUAL' },
+    itemRevision: 2,
     updatedAt: later,
   });
   removeWithDraft.update(activityRef(alice), {
     itemCount: 1,
     itemRevision: 2,
+    itemManifest: itemManifest(['bottle']),
     itemMutationId: 'phone',
     itemMutationType: 'REMOVE',
     updatedAt: later,
@@ -287,18 +413,18 @@ test('Activity Item management follows Activity status and timing', async () => 
   await assertSucceeds(trackedAddBatch(
     alice,
     'charger',
-    { fromCount: 1, fromRevision: 2, addedDuringActivity: true },
+    { fromItemIds: ['bottle'], fromRevision: 2, addedDuringActivity: true },
   ).commit());
   const wrongActive = trackedAddBatch(
     alice,
     'wrong-active',
-    { fromCount: 2, fromRevision: 3, addedDuringActivity: false },
+    { fromItemIds: ['bottle', 'charger'], fromRevision: 3, addedDuringActivity: false },
   );
   await assertFails(wrongActive.commit());
   await assertFails(trackedRemoveBatch(
     alice,
     'charger',
-    { fromCount: 2, fromRevision: 3 },
+    { fromItemIds: ['bottle', 'charger'], fromRevision: 3 },
   ).commit());
 
   await environment.withSecurityRulesDisabled(async context => {
@@ -309,10 +435,46 @@ test('Activity Item management follows Activity status and timing', async () => 
   const completedAdd = trackedAddBatch(
     alice,
     'keys',
-    { fromCount: 2, fromRevision: 3, addedDuringActivity: true },
+    { fromItemIds: ['bottle', 'charger'], fromRevision: 3, addedDuringActivity: true },
   );
   await assertFails(completedAdd.commit());
   await assertFails(deleteDoc(activityItemRef(alice, 'bottle')));
+});
+
+test('stale draft save cannot restore a removed Item selection', async () => {
+  const alice = client();
+  await seedActivity('UPCOMING', ['bottle', 'phone'], 0);
+  await assertSucceeds(setDoc(
+    checkRef(alice, 'draft_before_activity'),
+    draft('BEFORE_ACTIVITY', 0, { phone: 'MANUAL' }),
+  ));
+
+  const remove = writeBatch(alice);
+  remove.update(checkRef(alice, 'draft_before_activity'), {
+    foundMethods: {},
+    itemRevision: 1,
+    updatedAt: later,
+  });
+  remove.update(activityRef(alice), {
+    itemCount: 1,
+    itemRevision: 1,
+    itemManifest: itemManifest(['bottle']),
+    itemMutationId: 'phone',
+    itemMutationType: 'REMOVE',
+    updatedAt: later,
+  });
+  remove.delete(activityItemRef(alice, 'phone'));
+  await assertSucceeds(remove.commit());
+
+  await assertFails(updateDoc(checkRef(alice, 'draft_before_activity'), {
+    foundMethods: { phone: 'MANUAL' },
+    itemRevision: 1,
+    updatedAt: later,
+  }));
+  assert.deepEqual(
+    (await getDoc(checkRef(alice, 'draft_before_activity'))).data().foundMethods,
+    {},
+  );
 });
 
 test('Activity Item state cannot change without its matching child write', async () => {
@@ -322,6 +484,7 @@ test('Activity Item state cannot change without its matching child write', async
   await assertFails(updateDoc(activityRef(alice), {
     itemCount: 2,
     itemRevision: 1,
+    itemManifest: itemManifest(['bottle', 'phone']),
     itemMutationId: 'phone',
     itemMutationType: 'ADD',
     updatedAt: later,
@@ -332,7 +495,7 @@ test('Activity Item state cannot change without its matching child write', async
   ));
 });
 
-test('legacy Activity Item state can be initialized once before mutations', async () => {
+test('legacy Activity Item state remains readable but cannot be forged by a client', async () => {
   const alice = client();
   await environment.withSecurityRulesDisabled(async context => {
     const admin = context.firestore();
@@ -344,35 +507,45 @@ test('legacy Activity Item state can be initialized once before mutations', asyn
     activityItemRef(alice, 'phone'),
     activityItem('phone'),
   ));
-  await assertSucceeds(updateDoc(activityRef(alice), {
+  await assertFails(updateDoc(activityRef(alice), {
     itemCount: 1,
     itemRevision: 0,
     updatedAt: later,
   }));
-  await assertSucceeds(trackedAddBatch(
-    alice,
-    'phone',
-    { fromCount: 1, fromRevision: 0 },
-  ).commit());
+
+  await assertSucceeds(updateDoc(activityRef(alice), {
+    name: 'Readable Legacy Trip', updatedAt: later,
+  }));
+
   await assertFails(updateDoc(activityRef(alice), {
-    itemCount: 3,
+    itemCount: 1,
     itemRevision: 0,
+    itemManifest: itemManifest(['bottle']),
     updatedAt: later,
   }));
+  await environment.withSecurityRulesDisabled(async context => {
+    await updateDoc(activityRef(context.firestore()), {
+      itemCount: 1, itemRevision: 0, updatedAt: later,
+    });
+  });
+
+  await assertFails(updateDoc(activityRef(alice), {
+    itemManifest: itemManifest(['bottle']),
+    updatedAt: later,
+  }));
+  await assertFails(trackedAddBatch(
+    alice, 'phone', { fromItemIds: ['bottle'], fromRevision: 0 },
+  ).commit());
 });
 
 test('stale concurrent removal cannot delete the last Activity Item', async () => {
   const alice = client();
-  const initial = writeBatch(alice);
-  initial.set(activityRef(alice), activity('UPCOMING', 2, 0));
-  initial.set(activityItemRef(alice, 'bottle'), activityItem('bottle'));
-  initial.set(activityItemRef(alice, 'phone'), activityItem('phone'));
-  await assertSucceeds(initial.commit());
+  await seedActivity('UPCOMING', ['bottle', 'phone']);
 
   await assertSucceeds(trackedRemoveBatch(
     alice,
     'phone',
-    { fromCount: 2, fromRevision: 0 },
+    { fromItemIds: ['bottle', 'phone'], fromRevision: 0 },
   ).commit());
 
   // Represents a second device trying to commit the state it saw before
@@ -381,6 +554,7 @@ test('stale concurrent removal cannot delete the last Activity Item', async () =
   staleRemoval.update(activityRef(alice), {
     itemCount: 1,
     itemRevision: 1,
+    itemManifest: itemManifest(['phone']),
     itemMutationId: 'bottle',
     itemMutationType: 'REMOVE',
     updatedAt: later,
@@ -393,27 +567,19 @@ test('stale concurrent removal cannot delete the last Activity Item', async () =
 test('stale check Item revision is rejected after the Item set changes', async () => {
   const alice = client();
   const initialIds = ['bottle', 'phone'];
-  const initial = writeBatch(alice);
-  initial.set(activityRef(alice), activity('UPCOMING', 2, 0));
-  for (const id of initialIds) {
-    initial.set(activityItemRef(alice, id), activityItem(id));
-  }
-  await assertSucceeds(initial.commit());
+  await seedActivity('UPCOMING', initialIds);
 
   await assertSucceeds(trackedAddBatch(
     alice,
     'keys',
-    { fromCount: 2, fromRevision: 0 },
+    { fromItemIds: ['bottle', 'phone'], fromRevision: 0 },
   ).commit());
 
   const stale = writeBatch(alice);
   stale.set(
     checkRef(alice, 'before_activity'),
-    completedCheck('BEFORE_ACTIVITY', 2, 0),
+    completedCheck('BEFORE_ACTIVITY', initialIds, 0),
   );
-  for (const id of initialIds) {
-    stale.set(checkItemRef(alice, 'before_activity', id), checkedItem(id));
-  }
   stale.update(activityRef(alice), { status: 'ACTIVE', updatedAt: later });
   await assertFails(stale.commit());
 
@@ -421,11 +587,8 @@ test('stale check Item revision is rejected after the Item set changes', async (
   const fresh = writeBatch(alice);
   fresh.set(
     checkRef(alice, 'before_activity'),
-    completedCheck('BEFORE_ACTIVITY', 3, 1),
+    completedCheck('BEFORE_ACTIVITY', currentIds, 1),
   );
-  for (const id of currentIds) {
-    fresh.set(checkItemRef(alice, 'before_activity', id), checkedItem(id));
-  }
   fresh.update(activityRef(alice), { status: 'ACTIVE', updatedAt: later });
   await assertSucceeds(fresh.commit());
 });
@@ -444,12 +607,7 @@ test('v2 Item rules remain compatible, including owner-only access', async () =>
 test('three-Item Activity preserves Before history when a fourth Item is added for Return', async () => {
   const alice = client();
   const firstItems = ['bottle', 'phone', 'keys'];
-  const initial = writeBatch(alice);
-  initial.set(activityRef(alice), activity('UPCOMING', firstItems.length, 0));
-  for (const id of firstItems) {
-    initial.set(activityItemRef(alice, id), activityItem(id));
-  }
-  await assertSucceeds(initial.commit());
+  await seedActivity('UPCOMING', firstItems);
 
   await assertSucceeds(setDoc(checkRef(alice, 'draft_before_activity'), {
     ...draft(),
@@ -457,62 +615,53 @@ test('three-Item Activity preserves Before history when a fourth Item is added f
   }));
 
   const before = writeBatch(alice);
-  before.set(checkRef(alice, 'before_activity'), completedCheck('BEFORE_ACTIVITY', 3, 0));
-  for (const id of firstItems) {
-    before.set(checkItemRef(alice, 'before_activity', id),
-      id === 'keys'
-        ? { activityItemId: id, status: 'NOT_FOUND', method: null, checkedAt: null }
-        : { activityItemId: id, status: 'FOUND', method: id === 'phone' ? 'QR' : 'MANUAL', checkedAt: later });
-  }
+  before.set(
+    checkRef(alice, 'before_activity'),
+    completedCheck('BEFORE_ACTIVITY', firstItems, 0, {
+      manualItemIds: ['bottle'],
+      qrItemIds: ['phone'],
+      missingItemIds: ['keys'],
+    }),
+  );
   before.update(activityRef(alice), { status: 'ACTIVE', updatedAt: later });
   before.delete(checkRef(alice, 'draft_before_activity'));
   await assertSucceeds(before.commit());
 
-  const savedBefore = await Promise.all(firstItems.map(id =>
-    getDoc(checkItemRef(alice, 'before_activity', id))));
-  assert.equal(savedBefore.length, 3);
-  assert.equal(savedBefore.filter(row => row.data().status === 'FOUND').length, 2);
+  const savedBefore = (await getDoc(checkRef(alice, 'before_activity'))).data();
+  assert.equal(savedBefore.itemIds.length, 3);
+  assert.equal(savedBefore.manualItemIds.length + savedBefore.qrItemIds.length, 2);
+  assert.deepEqual(savedBefore.missingItemIds, ['keys']);
 
   await assertSucceeds(trackedAddBatch(
     alice,
     'charger',
-    { fromCount: 3, fromRevision: 0, addedDuringActivity: true },
+    { fromItemIds: firstItems, fromRevision: 0, addedDuringActivity: true },
   ).commit());
   const returnItems = [...firstItems, 'charger'];
   await assertSucceeds(setDoc(checkRef(alice, 'draft_return'), {
-    ...draft('RETURN'),
+    ...draft('RETURN', 1),
     foundMethods: Object.fromEntries(returnItems.map(id => [id, 'MANUAL'])),
   }));
 
   const returning = writeBatch(alice);
-  returning.set(checkRef(alice, 'return'), completedCheck('RETURN', 4, 1));
-  for (const id of returnItems) {
-    returning.set(checkItemRef(alice, 'return', id), checkedItem(id));
-  }
+  returning.set(checkRef(alice, 'return'), completedCheck('RETURN', returnItems, 1));
   returning.update(activityRef(alice), { status: 'COMPLETED', updatedAt: later });
   returning.delete(checkRef(alice, 'draft_return'));
   await assertSucceeds(returning.commit());
 
-  const persistedBefore = await Promise.all(firstItems.map(id =>
-    getDoc(checkItemRef(alice, 'before_activity', id))));
-  const persistedReturn = await Promise.all(returnItems.map(id =>
-    getDoc(checkItemRef(alice, 'return', id))));
-  assert.equal(persistedBefore.filter(row => row.data().status === 'FOUND').length, 2);
-  assert.equal(persistedBefore.length, 3);
-  assert.equal(persistedReturn.filter(row => row.data().status === 'FOUND').length, 4);
-  assert.equal(persistedReturn.length, 4);
+  const persistedBefore = (await getDoc(checkRef(alice, 'before_activity'))).data();
+  const persistedReturn = (await getDoc(checkRef(alice, 'return'))).data();
+  assert.equal(persistedBefore.manualItemIds.length + persistedBefore.qrItemIds.length, 2);
+  assert.equal(persistedBefore.itemIds.length, 3);
+  assert.equal(persistedReturn.manualItemIds.length + persistedReturn.qrItemIds.length, 4);
+  assert.equal(persistedReturn.itemIds.length, 4);
   assert.equal((await getDoc(activityRef(alice))).data().status, 'COMPLETED');
 });
 
 test('twelve-Item Activity can finish both checks atomically', async () => {
   const alice = client();
   const itemIds = Array.from({ length: 12 }, (_, index) => `item-${index + 1}`);
-  const initial = writeBatch(alice);
-  initial.set(activityRef(alice), activity('UPCOMING', itemIds.length, 0));
-  for (const id of itemIds) {
-    initial.set(activityItemRef(alice, id), activityItem(id));
-  }
-  await assertSucceeds(initial.commit());
+  await seedActivity('UPCOMING', itemIds);
 
   for (const [type, nextStatus, draftId, checkId] of [
     ['BEFORE_ACTIVITY', 'ACTIVE', 'draft_before_activity', 'before_activity'],
@@ -523,15 +672,52 @@ test('twelve-Item Activity can finish both checks atomically', async () => {
       foundMethods: Object.fromEntries(itemIds.map(id => [id, 'MANUAL'])),
     }));
     const save = writeBatch(alice);
-    save.set(checkRef(alice, checkId), completedCheck(type, itemIds.length, 0));
-    for (const id of itemIds) {
-      save.set(checkItemRef(alice, checkId, id), checkedItem(id));
-    }
+    save.set(checkRef(alice, checkId), completedCheck(type, itemIds, 0));
     save.update(activityRef(alice), { status: nextStatus, updatedAt: later });
     save.delete(checkRef(alice, draftId));
     await assertSucceeds(save.commit());
     assert.equal((await getDoc(activityRef(alice))).data().status, nextStatus);
-    const rows = await Promise.all(itemIds.map(id => getDoc(checkItemRef(alice, checkId, id))));
-    assert.equal(rows.filter(row => row.exists()).length, 12);
+    const savedCheck = (await getDoc(checkRef(alice, checkId))).data();
+    assert.equal(savedCheck.itemIds.length, 12);
+    assert.equal(savedCheck.manualItemIds.length, 12);
   }
+});
+
+test('two-hundred Item Activity remains writable and checkable within rule limits', async () => {
+  const alice = client();
+  const itemIds = Array.from({ length: 200 }, (_, index) => `item-${index + 1}`);
+  const firstIds = itemIds.slice(0, -1);
+  const lastId = itemIds[itemIds.length - 1];
+  await seedActivity('UPCOMING', firstIds);
+  await assertSucceeds(trackedAddBatch(
+    alice, lastId, { fromItemIds: firstIds, fromRevision: 0 },
+  ).commit());
+  await assertSucceeds(trackedRemoveBatch(
+    alice, lastId, { fromItemIds: itemIds, fromRevision: 1 },
+  ).commit());
+  await assertSucceeds(trackedAddBatch(
+    alice, lastId, { fromItemIds: firstIds, fromRevision: 2 },
+  ).commit());
+
+  await assertSucceeds(updateDoc(activityRef(alice), {
+    name: 'Large Trip',
+    updatedAt: later,
+  }));
+
+  const incomplete = writeBatch(alice);
+  incomplete.set(checkRef(alice, 'before_activity'), completedCheck(
+    'BEFORE_ACTIVITY', itemIds, 3,
+    { manualItemIds: itemIds.slice(0, -1), qrItemIds: [], missingItemIds: [] },
+  ));
+  incomplete.update(activityRef(alice), { status: 'ACTIVE', updatedAt: later });
+  await assertFails(incomplete.commit());
+
+  await assertSucceeds(transitionBatch(alice, 'BEFORE_ACTIVITY', itemIds, 3).commit());
+  const saved = (await getDoc(checkRef(alice, 'before_activity'))).data();
+  assert.equal(saved.itemIds.length, 200);
+  assert.equal((await getDoc(activityRef(alice))).data().status, 'ACTIVE');
+
+  await assertSucceeds(transitionBatch(alice, 'RETURN', itemIds, 3).commit());
+  assert.equal((await getDoc(checkRef(alice, 'return'))).data().itemIds.length, 200);
+  assert.equal((await getDoc(activityRef(alice))).data().status, 'COMPLETED');
 });

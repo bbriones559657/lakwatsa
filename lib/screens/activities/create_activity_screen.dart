@@ -123,12 +123,14 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
         }
 
         final lists = snapshot.data ?? [];
-        final createBlockedBySelection = isSaving ||
+        final createBlockedBySelection =
+            isSaving ||
             lists.isEmpty ||
             selectedListId == null ||
             isLoadingSelectedList ||
             selectedListLoadError != null ||
-            selectedActivityItems.isEmpty;
+            selectedActivityItems.isEmpty ||
+            selectedActivityItems.length > 200;
 
         return ListView(
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 30),
@@ -350,7 +352,8 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
                   endTime.hour,
                   endTime.minute,
                 );
-                final createDisabled = createBlockedBySelection ||
+                final createDisabled =
+                    createBlockedBySelection ||
                     activityName.isEmpty ||
                     activityName.length > 100 ||
                     !endAt.isAfter(startAt);
@@ -517,8 +520,7 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
 
       setState(() {
         selectedActivityItems = [];
-        selectedListLoadError =
-            'Failed to load Items from this Packing List.';
+        selectedListLoadError = 'Failed to load Items from this Packing List.';
         isLoadingSelectedList = false;
       });
     }
@@ -534,8 +536,9 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
       MaterialPageRoute(
         builder: (context) {
           return AddItemsScreen(
-            existingItemIds:
-                selectedActivityItems.map((item) => item.id).toSet(),
+            existingItemIds: selectedActivityItems
+                .map((item) => item.id)
+                .toSet(),
           );
         },
       ),
@@ -655,6 +658,11 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
       return;
     }
 
+    if (selectedActivityItems.length > 200) {
+      _showMessage('An Activity can contain at most 200 Items.');
+      return;
+    }
+
     final listId = selectedListId!;
     final activityItems = List<Item>.from(selectedActivityItems);
 
@@ -715,6 +723,11 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
       );
 
       Navigator.pop(context);
+    } on PartialActivityCreationException catch (error) {
+      if (!mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
+      Navigator.pop(context);
+      messenger.showSnackBar(SnackBar(content: Text(error.toString())));
     } catch (error) {
       if (!mounted) {
         return;
@@ -836,11 +849,7 @@ class _PreviewItem extends StatelessWidget {
                 child: const SizedBox(
                   width: 34,
                   height: 34,
-                  child: Icon(
-                    Icons.close,
-                    color: AppColors.ink,
-                    size: 20,
-                  ),
+                  child: Icon(Icons.close, color: AppColors.ink, size: 20),
                 ),
               ),
             ),
