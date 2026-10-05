@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 
 import '../../models/item.dart';
+import '../../models/item_category.dart';
+import '../../repositories/firestore_item_category_repository.dart';
 import '../../repositories/firestore_item_repository.dart';
 import '../../services/auth_service.dart';
 import '../../theme/app_theme.dart';
 import 'add_item_screen.dart';
+import 'manage_categories_screen.dart';
 
 class MyItemsScreen extends StatefulWidget {
   const MyItemsScreen({super.key});
@@ -17,17 +20,9 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
   final TextEditingController searchController = TextEditingController();
 
   FirestoreItemRepository? itemRepository;
+  FirestoreItemCategoryRepository? categoryRepository;
 
   String selectedCategory = 'All';
-
-  final List<String> categories = [
-    'All',
-    'Electronics',
-    'Documents',
-    'Clothing',
-    'Toiletries',
-    'Other',
-  ];
 
   @override
   void initState() {
@@ -37,6 +32,7 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
 
     if (user != null) {
       itemRepository = FirestoreItemRepository(userId: user.uid);
+      categoryRepository = FirestoreItemCategoryRepository(userId: user.uid);
     }
   }
 
@@ -55,7 +51,10 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
           children: [
             const _StatusBar(),
 
-            _Header(onAdd: _openAddItem),
+            _Header(
+              onAdd: _openAddItem,
+              onCategories: _openCategories,
+            ),
 
             Expanded(child: _buildContent()),
           ],
@@ -65,21 +64,21 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
   }
 
   Widget _buildContent() {
-    if (itemRepository == null) {
+    if (itemRepository == null || categoryRepository == null) {
       return Center(
         child: Text('Please sign in again.', style: AppTextStyles.body),
       );
     }
 
-    return StreamBuilder<List<Item>>(
-      stream: itemRepository!.watchItems(),
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
+    return StreamBuilder<List<ItemCategory>>(
+      stream: categoryRepository!.watchCustomCategories(),
+      builder: (context, categorySnapshot) {
+        if (categorySnapshot.hasError) {
           return Center(
             child: Padding(
               padding: const EdgeInsets.all(20),
               child: Text(
-                'Failed to load items.\n${snapshot.error}',
+                'Failed to load categories.\n${categorySnapshot.error}',
                 textAlign: TextAlign.center,
                 style: AppTextStyles.body,
               ),
@@ -87,55 +86,98 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
           );
         }
 
-        if (snapshot.connectionState == ConnectionState.waiting) {
+        if (categorySnapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
         }
 
-        final allItems = snapshot.data ?? [];
+        final customCategories = categorySnapshot.data ?? [];
 
-        final filteredItems = _filterItems(allItems);
+        return StreamBuilder<List<Item>>(
+          stream: itemRepository!.watchItems(),
+          builder: (context, snapshot) {
+            if (snapshot.hasError) {
+              return Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Text(
+                    'Failed to load items.\n${snapshot.error}',
+                    textAlign: TextAlign.center,
+                    style: AppTextStyles.body,
+                  ),
+                ),
+              );
+            }
 
-        return ListView(
-          padding: const EdgeInsets.only(bottom: 24),
-          children: [
-            _SearchBar(
-              controller: searchController,
-              onChanged: (_) {
-                setState(() {});
-              },
-            ),
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
 
-            _CategoryChips(
-              categories: categories,
-              selectedCategory: selectedCategory,
-              onSelected: (category) {
-                setState(() {
-                  selectedCategory = category;
-                });
-              },
-            ),
+            final allItems = snapshot.data ?? [];
+            final categories = _categoryNames(customCategories, allItems);
+            final activeCategory = categories.contains(selectedCategory)
+                ? selectedCategory
+                : 'All';
+            final filteredItems = _filterItems(allItems, activeCategory);
 
-            const SizedBox(height: 12),
+            return ListView(
+              padding: const EdgeInsets.only(bottom: 24),
+              children: [
+                _SearchBar(
+                  controller: searchController,
+                  onChanged: (_) {
+                    setState(() {});
+                  },
+                ),
 
-            if (allItems.isEmpty)
-              const _EmptyState(
-                title: 'No items yet',
-                message: 'Add your first item to My Items.',
-              )
-            else if (filteredItems.isEmpty)
-              const _EmptyState(
-                title: 'No items found',
-                message: 'Try another search or category.',
-              )
-            else
-              ..._buildSections(filteredItems),
-          ],
+                _CategoryChips(
+                  categories: categories,
+                  selectedCategory: activeCategory,
+                  onSelected: (category) {
+                    setState(() {
+                      selectedCategory = category;
+                    });
+                  },
+                ),
+
+                const SizedBox(height: 12),
+
+                if (allItems.isEmpty)
+                  const _EmptyState(
+                    title: 'No items yet',
+                    message: 'Add your first item to My Items.',
+                  )
+                else if (filteredItems.isEmpty)
+                  const _EmptyState(
+                    title: 'No items found',
+                    message: 'Try another search or category.',
+                  )
+                else
+                  ..._buildSections(filteredItems, categories),
+              ],
+            );
+          },
         );
       },
     );
   }
 
-  List<Item> _filterItems(List<Item> items) {
+  List<String> _categoryNames(
+    List<ItemCategory> customCategories,
+    List<Item> items,
+  ) {
+    final names = <String>{
+      'All',
+      ...ItemCategory.builtInNames,
+      ...customCategories.map((category) => category.name),
+      ...items.map((item) => item.category),
+    };
+
+    names.removeWhere((name) => name.trim().isEmpty);
+
+    return names.toList();
+  }
+
+  List<Item> _filterItems(List<Item> items, String activeCategory) {
     final search = searchController.text.trim().toLowerCase();
 
     return items.where((item) {
@@ -143,13 +185,13 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
           search.isEmpty || item.name.toLowerCase().contains(search);
 
       final matchesCategory =
-          selectedCategory == 'All' || item.category == selectedCategory;
+          activeCategory == 'All' || item.category == activeCategory;
 
       return matchesSearch && matchesCategory;
     }).toList();
   }
 
-  List<Widget> _buildSections(List<Item> items) {
+  List<Widget> _buildSections(List<Item> items, List<String> categories) {
     final Map<String, List<Item>> groupedItems = {};
 
     for (final item in items) {
@@ -195,6 +237,15 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
 
     // No manual refresh needed.
     // Firestore StreamBuilder updates automatically.
+  }
+
+  Future<void> _openCategories() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const ManageCategoriesScreen(),
+      ),
+    );
   }
 }
 
@@ -255,8 +306,12 @@ class _StatusBar extends StatelessWidget {
 
 class _Header extends StatelessWidget {
   final VoidCallback onAdd;
+  final VoidCallback onCategories;
 
-  const _Header({required this.onAdd});
+  const _Header({
+    required this.onAdd,
+    required this.onCategories,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -273,7 +328,11 @@ class _Header extends StatelessWidget {
 
           const Spacer(),
 
-          _HeaderButton(text: 'Q', filled: false, onTap: () {}),
+          _HeaderButton(
+            icon: Icons.category_outlined,
+            filled: false,
+            onTap: onCategories,
+          ),
 
           const SizedBox(width: 10),
 
@@ -285,15 +344,17 @@ class _Header extends StatelessWidget {
 }
 
 class _HeaderButton extends StatelessWidget {
-  final String text;
+  final String? text;
+  final IconData? icon;
   final bool filled;
   final VoidCallback onTap;
 
   const _HeaderButton({
-    required this.text,
+    this.text,
+    this.icon,
     required this.filled,
     required this.onTap,
-  });
+  }) : assert(text != null || icon != null);
 
   @override
   Widget build(BuildContext context) {
@@ -311,13 +372,19 @@ class _HeaderButton extends StatelessWidget {
               : null,
         ),
         alignment: Alignment.center,
-        child: Text(
-          text,
-          style: AppTextStyles.bodyBold.copyWith(
-            color: filled ? AppColors.background : AppColors.ink,
-            fontSize: text == '+' ? 20 : 14,
-          ),
-        ),
+        child: icon != null
+            ? Icon(
+                icon,
+                color: filled ? AppColors.background : AppColors.ink,
+                size: 19,
+              )
+            : Text(
+                text!,
+                style: AppTextStyles.bodyBold.copyWith(
+                  color: filled ? AppColors.background : AppColors.ink,
+                  fontSize: text == '+' ? 20 : 14,
+                ),
+              ),
       ),
     );
   }

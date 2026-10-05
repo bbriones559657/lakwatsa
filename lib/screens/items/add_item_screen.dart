@@ -2,13 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../models/item.dart';
+import '../../models/item_category.dart';
 import '../../models/item_list.dart';
+import '../../repositories/firestore_item_category_repository.dart';
 import '../../repositories/firestore_item_repository.dart';
 import '../../repositories/firestore_list_repository.dart';
 import '../../services/auth_service.dart';
 import '../../theme/app_theme.dart';
 import '../lists/list_details_screen.dart';
 import 'item_qr_screen.dart';
+import 'manage_categories_screen.dart';
 
 class AddItemScreen extends StatefulWidget {
   final Item? item;
@@ -23,6 +26,8 @@ class AddItemScreen extends StatefulWidget {
 
 class _AddItemScreenState extends State<AddItemScreen> {
   final TextEditingController itemNameController = TextEditingController();
+
+  FirestoreItemCategoryRepository? categoryRepository;
 
   String selectedCategory = 'Electronics';
 
@@ -48,12 +53,27 @@ class _AddItemScreenState extends State<AddItemScreen> {
       quantity = item.quantity;
       hasQrCode = item.hasQr;
     }
+
+    final user = AuthService().currentUser;
+
+    if (user != null) {
+      categoryRepository = FirestoreItemCategoryRepository(userId: user.uid);
+    }
   }
 
   @override
   void dispose() {
     itemNameController.dispose();
     super.dispose();
+  }
+
+  Future<void> _openCategoryManager() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const ManageCategoriesScreen(),
+      ),
+    );
   }
 
   Future<void> _saveItem() async {
@@ -442,6 +462,53 @@ class _AddItemScreenState extends State<AddItemScreen> {
     );
   }
 
+  Widget _buildCategoryDropdown() {
+    final repository = categoryRepository;
+
+    if (repository == null) {
+      return _CategoryDropdown(
+        value: selectedCategory,
+        categories: _categoryNames(const []),
+        onChanged: _selectCategory,
+      );
+    }
+
+    return StreamBuilder<List<ItemCategory>>(
+      stream: repository.watchCustomCategories(),
+      builder: (context, snapshot) {
+        final customCategories = snapshot.data ?? [];
+
+        return _CategoryDropdown(
+          value: selectedCategory,
+          categories: _categoryNames(customCategories),
+          onChanged: _selectCategory,
+        );
+      },
+    );
+  }
+
+  List<String> _categoryNames(List<ItemCategory> customCategories) {
+    final names = <String>{...ItemCategory.builtInNames};
+
+    for (final category in customCategories) {
+      final name = category.name.trim();
+
+      if (name.isNotEmpty) {
+        names.add(name);
+      }
+    }
+
+    names.add(selectedCategory);
+
+    return names.toList();
+  }
+
+  void _selectCategory(String value) {
+    setState(() {
+      selectedCategory = value;
+    });
+  }
+
   String _getIconKey(String category) {
     switch (category) {
       case 'Electronics':
@@ -494,18 +561,26 @@ class _AddItemScreenState extends State<AddItemScreen> {
 
                     const SizedBox(height: 18),
 
-                    const _FieldLabel('Category'),
+                    Row(
+                      children: [
+                        const _FieldLabel('Category'),
+                        const Spacer(),
+                        GestureDetector(
+                          onTap: _openCategoryManager,
+                          child: Text(
+                            'Manage',
+                            style: AppTextStyles.bodyBold.copyWith(
+                              color: AppColors.green,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
 
                     const SizedBox(height: 7),
 
-                    _CategoryDropdown(
-                      value: selectedCategory,
-                      onChanged: (value) {
-                        setState(() {
-                          selectedCategory = value;
-                        });
-                      },
-                    ),
+                    _buildCategoryDropdown(),
 
                     const SizedBox(height: 18),
 
@@ -799,9 +874,14 @@ class _TextField extends StatelessWidget {
 
 class _CategoryDropdown extends StatelessWidget {
   final String value;
+  final List<String> categories;
   final ValueChanged<String> onChanged;
 
-  const _CategoryDropdown({required this.value, required this.onChanged});
+  const _CategoryDropdown({
+    required this.value,
+    required this.categories,
+    required this.onChanged,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -820,13 +900,12 @@ class _CategoryDropdown extends StatelessWidget {
           icon: const Icon(Icons.keyboard_arrow_down, color: AppColors.ink),
           style: AppTextStyles.bodyBold.copyWith(fontSize: 13),
           dropdownColor: AppColors.background,
-          items: const [
-            DropdownMenuItem(value: 'Electronics', child: Text('Electronics')),
-            DropdownMenuItem(value: 'Documents', child: Text('Documents')),
-            DropdownMenuItem(value: 'Clothing', child: Text('Clothing')),
-            DropdownMenuItem(value: 'Toiletries', child: Text('Toiletries')),
-            DropdownMenuItem(value: 'Other', child: Text('Other')),
-          ],
+          items: categories.map((category) {
+            return DropdownMenuItem(
+              value: category,
+              child: Text(category),
+            );
+          }).toList(),
           onChanged: (value) {
             if (value != null) {
               onChanged(value);
