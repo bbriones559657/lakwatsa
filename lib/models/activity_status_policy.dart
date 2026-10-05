@@ -42,6 +42,14 @@ class ActivityStatusPolicy {
     _require(current, 'UPCOMING', 'remove Items from the Activity');
   }
 
+  static void requireItemCountForRemoval(int itemCount) {
+    if (itemCount <= 1) {
+      throw StateError(
+        'Cannot remove the last Item from an Activity.',
+      );
+    }
+  }
+
   static void requireMetadataEdit(String? current) {
     if (current != 'UPCOMING' && current != 'ACTIVE') {
       throw StateError(

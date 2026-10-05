@@ -134,7 +134,9 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
                   padding: const EdgeInsets.only(bottom: 12),
                   child: _ActivityItemCard(
                     item: item,
-                    onRemove: activity.isUpcoming && !isManagingItems
+                    onRemove: activity.isUpcoming &&
+                            !isManagingItems &&
+                            items.length > 1
                         ? () {
                             _confirmRemoveItem(item);
                           }
@@ -142,6 +144,16 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
                   ),
                 );
               }),
+
+            if (activity.isUpcoming && items.length == 1)
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Text(
+                  'Add another Item before removing the last one.',
+                  textAlign: TextAlign.center,
+                  style: AppTextStyles.body.copyWith(color: AppColors.muted),
+                ),
+              ),
 
             const SizedBox(height: 14),
 

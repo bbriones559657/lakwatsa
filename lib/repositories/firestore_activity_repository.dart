@@ -416,6 +416,10 @@ class FirestoreActivityRepository implements ActivityRepository {
       checkType: 'BEFORE_ACTIVITY',
     );
 
+    final itemCountSnapshot = await _activityItemsCollection(activityId)
+        .limit(2)
+        .get();
+
     await firestore.runTransaction((transaction) async {
       // Keep a partially completed Before draft consistent with item removal.
       final activitySnapshot = await transaction.get(activityDocument);
@@ -427,6 +431,9 @@ class FirestoreActivityRepository implements ActivityRepository {
 
       ActivityStatusPolicy.requireItemRemoval(
         activitySnapshot.data()?['status'] as String?,
+      );
+      ActivityStatusPolicy.requireItemCountForRemoval(
+        itemCountSnapshot.docs.length,
       );
 
       if (draftSnapshot.exists) {

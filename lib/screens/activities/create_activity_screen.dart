@@ -123,8 +123,12 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
         }
 
         final lists = snapshot.data ?? [];
-        final createDisabled =
-            isSaving || lists.isEmpty || isLoadingSelectedList;
+        final createDisabled = isSaving ||
+            lists.isEmpty ||
+            selectedListId == null ||
+            isLoadingSelectedList ||
+            selectedListLoadError != null ||
+            selectedActivityItems.isEmpty;
 
         return ListView(
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 30),
