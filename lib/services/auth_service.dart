@@ -17,7 +17,7 @@ class AuthService {
   }) async {
     return await _auth.createUserWithEmailAndPassword(
       email: email.trim(),
-      password: password.trim(),
+      password: password,
     );
   }
 
@@ -27,7 +27,7 @@ class AuthService {
   }) async {
     return await _auth.signInWithEmailAndPassword(
       email: email.trim(),
-      password: password.trim(),
+      password: password,
     );
   }
 
