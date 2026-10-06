@@ -97,6 +97,16 @@ class _SignInScreenState extends State<SignInScreen> {
     }
   }
 
+  void _clearServerError() {
+    if (errorMessage == null || isLoading) {
+      return;
+    }
+
+    setState(() {
+      errorMessage = null;
+    });
+  }
+
   void _switchMode() {
     if (isLoading) {
       return;
@@ -123,21 +133,40 @@ class _SignInScreenState extends State<SignInScreen> {
             const Positioned.fill(child: _AuthBackgroundDots()),
             LayoutBuilder(
               builder: (context, constraints) {
+                final compactHeight = constraints.maxHeight < 720;
+                final horizontalPadding = constraints.maxWidth < 390
+                    ? 20.0
+                    : 28.0;
+                final verticalPadding = compactHeight ? 20.0 : 28.0;
+                final minimumContentHeight =
+                    constraints.maxHeight > verticalPadding * 2
+                    ? constraints.maxHeight - verticalPadding * 2
+                    : 0.0;
+
                 return SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(28, 28, 28, 32),
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      minHeight: constraints.maxHeight - 60,
-                    ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  padding: EdgeInsets.fromLTRB(
+                    horizontalPadding,
+                    verticalPadding,
+                    horizontalPadding,
+                    compactHeight ? 24 : 32,
+                  ),
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        minHeight: minimumContentHeight,
+                        maxWidth: 420,
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
                         const _BrandMark(),
-                        const SizedBox(height: 16),
+                        SizedBox(height: compactHeight ? 12 : 16),
                         Text(
                           'Lakwatsa',
                           style: AppTextStyles.heading.copyWith(
-                            fontSize: 38,
+                            fontSize: compactHeight ? 34 : 38,
                             fontWeight: FontWeight.w800,
                             height: 1.1,
                           ),
@@ -148,7 +177,7 @@ class _SignInScreenState extends State<SignInScreen> {
                           textAlign: TextAlign.center,
                           style: AppTextStyles.pixel.copyWith(fontSize: 8),
                         ),
-                        const SizedBox(height: 18),
+                        SizedBox(height: compactHeight ? 14 : 18),
                         Container(
                           width: 36,
                           height: 3,
@@ -157,7 +186,7 @@ class _SignInScreenState extends State<SignInScreen> {
                             borderRadius: BorderRadius.circular(1),
                           ),
                         ),
-                        const SizedBox(height: 48),
+                        SizedBox(height: compactHeight ? 28 : 48),
                         _PixelCard(
                           child: Form(
                             key: formKey,
@@ -194,6 +223,7 @@ class _SignInScreenState extends State<SignInScreen> {
                                     keyboardType: TextInputType.emailAddress,
                                     textInputAction: TextInputAction.next,
                                     autofillHints: const [AutofillHints.email],
+                                    onChanged: (_) => _clearServerError(),
                                     validator: (value) {
                                       return AuthFormValidation.validateEmail(
                                         value ?? '',
@@ -223,6 +253,7 @@ class _SignInScreenState extends State<SignInScreen> {
                                           ? AutofillHints.newPassword
                                           : AutofillHints.password,
                                     ],
+                                    onChanged: (_) => _clearServerError(),
                                     validator: (value) {
                                       return AuthFormValidation.validatePassword(
                                         value ?? '',
@@ -263,6 +294,7 @@ class _SignInScreenState extends State<SignInScreen> {
                                       autofillHints: const [
                                         AutofillHints.newPassword,
                                       ],
+                                      onChanged: (_) => _clearServerError(),
                                       validator: (value) {
                                         return AuthFormValidation
                                             .validateConfirmPassword(
@@ -293,13 +325,10 @@ class _SignInScreenState extends State<SignInScreen> {
                                   ],
                                   const SizedBox(height: 20),
                                   _PrimaryButton(
-                                    text: isLoading
-                                        ? isRegisterMode
-                                              ? 'Creating account...'
-                                              : 'Signing in...'
-                                        : isRegisterMode
+                                    text: isRegisterMode
                                         ? 'Create Account'
                                         : 'Sign In',
+                                    isLoading: isLoading,
                                     onPressed: isLoading ? null : _submit,
                                   ),
                                   const SizedBox(height: 10),
@@ -332,7 +361,7 @@ class _SignInScreenState extends State<SignInScreen> {
                             ),
                           ),
                         ),
-                        const SizedBox(height: 28),
+                        SizedBox(height: compactHeight ? 20 : 28),
                         Text(
                           'your items. always ready.',
                           textAlign: TextAlign.center,
@@ -341,7 +370,8 @@ class _SignInScreenState extends State<SignInScreen> {
                             color: AppColors.muted.withValues(alpha: .65),
                           ),
                         ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 );
@@ -502,6 +532,7 @@ class _AuthTextField extends StatelessWidget {
   final bool enableSuggestions;
   final bool autocorrect;
   final String? Function(String?) validator;
+  final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onSubmitted;
   final Widget? suffix;
 
@@ -516,6 +547,7 @@ class _AuthTextField extends StatelessWidget {
     this.obscureText = false,
     this.enableSuggestions = true,
     this.autocorrect = true,
+    this.onChanged,
     this.onSubmitted,
     this.suffix,
   });
@@ -532,6 +564,7 @@ class _AuthTextField extends StatelessWidget {
       enableSuggestions: enableSuggestions,
       autocorrect: autocorrect,
       validator: validator,
+      onChanged: onChanged,
       onFieldSubmitted: onSubmitted,
       style: AppTextStyles.bodyBold.copyWith(fontSize: 13),
       decoration: InputDecoration(
@@ -650,9 +683,14 @@ class _ErrorMessage extends StatelessWidget {
 
 class _PrimaryButton extends StatelessWidget {
   final String text;
+  final bool isLoading;
   final VoidCallback? onPressed;
 
-  const _PrimaryButton({required this.text, required this.onPressed});
+  const _PrimaryButton({
+    required this.text,
+    required this.isLoading,
+    required this.onPressed,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -679,12 +717,39 @@ class _PrimaryButton extends StatelessWidget {
             child: SizedBox(
               height: 48,
               child: Center(
-                child: Text(
-                  text,
-                  style: AppTextStyles.bodyBold.copyWith(
-                    color: AppColors.background,
-                    fontSize: 14,
-                  ),
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 150),
+                  child: isLoading
+                      ? Row(
+                          key: const ValueKey('loading'),
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: AppColors.background,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              'Please wait...',
+                              style: AppTextStyles.bodyBold.copyWith(
+                                color: AppColors.background,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ],
+                        )
+                      : Text(
+                          text,
+                          key: const ValueKey('label'),
+                          style: AppTextStyles.bodyBold.copyWith(
+                            color: AppColors.background,
+                            fontSize: 14,
+                          ),
+                        ),
                 ),
               ),
             ),
