@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../theme/app_theme.dart';
+import '../../widgets/lakwatsa_ui.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -9,11 +10,30 @@ class HomeScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Stack(
       children: [
-        const PixelDots(),
+        const LakwatsaBackgroundDots(),
         Column(
           children: [
-            const _StatusBar(),
-            const _TopNav(),
+            LakwatsaTopBar(
+              title: 'Lakwatsa',
+              actions: [
+                Semantics(
+                  label: 'Profile',
+                  child: Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: AppColors.ink,
+                        width: 1.5,
+                      ),
+                    ),
+                    alignment: Alignment.center,
+                    child: Text('B', style: AppTextStyles.bodyBold),
+                  ),
+                ),
+              ],
+            ),
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.only(bottom: 24),
@@ -31,93 +51,6 @@ class HomeScreen extends StatelessWidget {
           ],
         ),
       ],
-    );
-  }
-}
-
-class PixelDots extends StatelessWidget {
-  const PixelDots({super.key});
-
-  static const positions = [
-    Offset(26, 80),
-    Offset(316, 110),
-    Offset(40, 290),
-    Offset(322, 270),
-    Offset(28, 510),
-    Offset(334, 490),
-    Offset(60, 650),
-    Offset(298, 670),
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    return IgnorePointer(
-      child: Stack(
-        children: positions.map((position) {
-          return Positioned(
-            left: position.dx,
-            top: position.dy,
-            child: Container(
-              width: 4,
-              height: 4,
-              color: AppColors.ink.withValues(alpha: .05),
-            ),
-          );
-        }).toList(),
-      ),
-    );
-  }
-}
-
-class _StatusBar extends StatelessWidget {
-  const _StatusBar();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 28,
-      color: AppColors.ink,
-      padding: const EdgeInsets.only(left: 16),
-      alignment: Alignment.centerLeft,
-      child: Text(
-        '9:41',
-        style: AppTextStyles.pixelWhite.copyWith(
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-    );
-  }
-}
-
-class _TopNav extends StatelessWidget {
-  const _TopNav();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 56,
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      decoration: const BoxDecoration(
-        color: AppColors.background,
-        border: Border(bottom: BorderSide(color: AppColors.ink, width: 2)),
-      ),
-      child: Row(
-        children: [
-          Text('Lakwatsa', style: AppTextStyles.heading),
-          const Spacer(),
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(color: AppColors.ink, width: 1.5),
-            ),
-            alignment: Alignment.center,
-            child: Text('B', style: AppTextStyles.bodyBold),
-          ),
-        ],
-      ),
     );
   }
 }
@@ -148,9 +81,8 @@ class _ActiveActivityCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: PixelCard(
+      child: LakwatsaPixelCard(
         color: AppColors.card,
-        shadowColor: AppColors.ink,
         shadowOffset: const Offset(5, 5),
         height: 190,
         child: Padding(
@@ -393,37 +325,6 @@ class _RecentListCard extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-class PixelCard extends StatelessWidget {
-  final Widget child;
-  final Color color;
-  final Color shadowColor;
-  final Offset shadowOffset;
-  final double height;
-
-  const PixelCard({
-    super.key,
-    required this.child,
-    required this.color,
-    required this.shadowColor,
-    required this.shadowOffset,
-    required this.height,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: height,
-      decoration: BoxDecoration(
-        color: color,
-        border: Border.all(color: AppColors.ink, width: 2.5),
-        borderRadius: BorderRadius.circular(4),
-        boxShadow: [BoxShadow(color: shadowColor, offset: shadowOffset)],
-      ),
-      child: child,
     );
   }
 }

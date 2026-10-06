@@ -52,42 +52,57 @@ class _BottomNavigation extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 56,
-      decoration: const BoxDecoration(
-        color: AppColors.background,
-        border: Border(top: BorderSide(color: AppColors.ink, width: 2)),
-      ),
-      child: Row(
-        children: List.generate(labels.length, (index) {
-          final selected = currentIndex == index;
+    return SafeArea(
+      top: false,
+      child: Container(
+        height: 56,
+        decoration: const BoxDecoration(
+          color: AppColors.background,
+          border: Border(top: BorderSide(color: AppColors.ink, width: 2)),
+        ),
+        child: Row(
+          children: List.generate(labels.length, (index) {
+            final selected = currentIndex == index;
+            final label = labels[index];
 
-          return Expanded(
-            child: GestureDetector(
-              onTap: () => onChanged(index),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    labels[index],
-                    style: selected
-                        ? AppTextStyles.navSelected
-                        : AppTextStyles.nav,
-                  ),
-                  const SizedBox(height: 7),
-                  if (selected)
-                    const SizedBox(
-                      width: 4,
-                      height: 4,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(color: AppColors.ink),
-                      ),
+            return Expanded(
+              child: Semantics(
+                button: true,
+                selected: selected,
+                label: '$label tab',
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: () => onChanged(index),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          label,
+                          style: selected
+                              ? AppTextStyles.navSelected
+                              : AppTextStyles.nav,
+                        ),
+                        const SizedBox(height: 7),
+                        SizedBox(
+                          width: 4,
+                          height: 4,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: selected
+                                  ? AppColors.ink
+                                  : Colors.transparent,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                ],
+                  ),
+                ),
               ),
-            ),
-          );
-        }),
+            );
+          }),
+        ),
       ),
     );
   }

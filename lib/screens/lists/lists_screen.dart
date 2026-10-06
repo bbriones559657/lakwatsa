@@ -4,6 +4,7 @@ import '../../models/item_list.dart';
 import '../../repositories/firestore_list_repository.dart';
 import '../../services/auth_service.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/lakwatsa_ui.dart';
 import 'list_details_screen.dart';
 
 class ListsScreen extends StatefulWidget {
@@ -42,31 +43,49 @@ class _ListsScreenState extends State<ListsScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
-        child: Column(
+        child: Stack(
           children: [
-            _Header(
-              editMode: editMode,
-              onEdit: () {
-                setState(() {
-                  editMode = !editMode;
-                });
-              },
-              onAdd: _showCreateListDialog,
-            ),
-            Expanded(
-              child: Column(
-                children: [
-                  const SizedBox(height: 16),
-                  _SearchBar(
-                    controller: searchController,
-                    onChanged: (_) {
-                      setState(() {});
-                    },
+            const LakwatsaBackgroundDots(),
+            Column(
+              children: [
+                LakwatsaTopBar(
+                  title: 'Lists',
+                  actions: [
+                    LakwatsaHeaderAction(
+                      text: editMode ? 'Save' : 'Edit',
+                      label: editMode ? 'Save list changes' : 'Edit lists',
+                      filled: editMode,
+                      onPressed: () {
+                        setState(() {
+                          editMode = !editMode;
+                        });
+                      },
+                    ),
+                    LakwatsaHeaderAction(
+                      text: '+',
+                      label: 'Create list',
+                      filled: true,
+                      onPressed: _showCreateListDialog,
+                    ),
+                  ],
+                ),
+                Expanded(
+                  child: Column(
+                    children: [
+                      const SizedBox(height: 16),
+                      LakwatsaSearchField(
+                        controller: searchController,
+                        hintText: 'Search lists...',
+                        onChanged: (_) {
+                          setState(() {});
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      Expanded(child: _buildLists()),
+                    ],
                   ),
-                  const SizedBox(height: 16),
-                  Expanded(child: _buildLists()),
-                ],
-              ),
+                ),
+              ],
             ),
           ],
         ),
@@ -686,121 +705,6 @@ class _IconCategory {
   const _IconCategory({required this.name, required this.icons});
 }
 
-class _Header extends StatelessWidget {
-  final bool editMode;
-  final VoidCallback onEdit;
-  final VoidCallback onAdd;
-
-  const _Header({
-    required this.editMode,
-    required this.onEdit,
-    required this.onAdd,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 70,
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: AppColors.ink, width: 2)),
-      ),
-      child: Row(
-        children: [
-          Text('Lists', style: AppTextStyles.heading.copyWith(fontSize: 24)),
-
-          const Spacer(),
-
-          GestureDetector(
-            onTap: onEdit,
-            child: Container(
-              height: 42,
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              decoration: BoxDecoration(
-                color: editMode ? AppColors.ink : AppColors.background,
-                border: Border.all(color: AppColors.ink, width: 2),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              alignment: Alignment.center,
-              child: Text(
-                editMode ? 'Save' : 'Edit',
-                style: AppTextStyles.bodyBold.copyWith(
-                  color: editMode ? AppColors.background : AppColors.ink,
-                ),
-              ),
-            ),
-          ),
-
-          const SizedBox(width: 8),
-
-          GestureDetector(
-            onTap: onAdd,
-            child: Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                color: AppColors.ink,
-                border: Border.all(color: AppColors.ink, width: 2),
-                borderRadius: BorderRadius.circular(4),
-                boxShadow: const [
-                  BoxShadow(color: AppColors.green, offset: Offset(3, 3)),
-                ],
-              ),
-              alignment: Alignment.center,
-              child: Text(
-                '+',
-                style: AppTextStyles.bodyBold.copyWith(
-                  color: AppColors.background,
-                  fontSize: 20,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SearchBar extends StatelessWidget {
-  final TextEditingController controller;
-  final ValueChanged<String> onChanged;
-
-  const _SearchBar({required this.controller, required this.onChanged});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Container(
-        decoration: BoxDecoration(
-          color: AppColors.background,
-          border: Border.all(color: AppColors.ink, width: 2),
-          borderRadius: BorderRadius.circular(4),
-          boxShadow: const [
-            BoxShadow(color: AppColors.ink, offset: Offset(3, 3)),
-          ],
-        ),
-        child: TextField(
-          controller: controller,
-          onChanged: onChanged,
-          style: AppTextStyles.body,
-          decoration: InputDecoration(
-            hintText: 'Search lists...',
-            hintStyle: AppTextStyles.body.copyWith(color: AppColors.muted),
-            prefixIcon: const Icon(
-              Icons.search,
-              color: AppColors.ink,
-              size: 20,
-            ),
-            border: InputBorder.none,
-            contentPadding: const EdgeInsets.symmetric(vertical: 14),
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 class _ListGrid extends StatelessWidget {
   final List<ItemList> lists;

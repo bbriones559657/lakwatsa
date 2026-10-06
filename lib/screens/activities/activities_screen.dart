@@ -6,6 +6,7 @@ import '../../services/auth_service.dart';
 import 'create_activity_screen.dart';
 import 'activity_details_screen.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/lakwatsa_ui.dart';
 
 class ActivitiesScreen extends StatefulWidget {
   const ActivitiesScreen({super.key});
@@ -35,35 +36,44 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
-        child: Column(
+        child: Stack(
           children: [
-            _Header(
-              onAdd: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) {
-                      return const CreateActivityScreen();
-                    },
-                  ),
-                );
-              },
+            const LakwatsaBackgroundDots(),
+            Column(
+              children: [
+                LakwatsaTopBar(
+                  title: 'Activities',
+                  actions: [
+                    LakwatsaHeaderAction(
+                      text: '+',
+                      label: 'Create activity',
+                      filled: true,
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) {
+                              return const CreateActivityScreen();
+                            },
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                _ActivityTabs(
+                  selectedTab: selectedTab,
+                  onChanged: (tab) {
+                    setState(() {
+                      selectedTab = tab;
+                    });
+                  },
+                ),
+                const SizedBox(height: 16),
+                Expanded(child: _buildActivities()),
+              ],
             ),
-
-            const SizedBox(height: 16),
-
-            _ActivityTabs(
-              selectedTab: selectedTab,
-              onChanged: (tab) {
-                setState(() {
-                  selectedTab = tab;
-                });
-              },
-            ),
-
-            const SizedBox(height: 16),
-
-            Expanded(child: _buildActivities()),
           ],
         ),
       ),
@@ -137,56 +147,6 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
   }
 }
 
-class _Header extends StatelessWidget {
-  final VoidCallback onAdd;
-
-  const _Header({required this.onAdd});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 70,
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: AppColors.ink, width: 2)),
-      ),
-      child: Row(
-        children: [
-          Text(
-            'Activities',
-            style: AppTextStyles.heading.copyWith(fontSize: 24),
-          ),
-
-          const Spacer(),
-
-          GestureDetector(
-            onTap: onAdd,
-            child: Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                color: AppColors.ink,
-                border: Border.all(color: AppColors.ink, width: 2),
-                borderRadius: BorderRadius.circular(4),
-                boxShadow: const [
-                  BoxShadow(color: AppColors.green, offset: Offset(3, 3)),
-                ],
-              ),
-              alignment: Alignment.center,
-              child: Text(
-                '+',
-                style: AppTextStyles.bodyBold.copyWith(
-                  color: AppColors.background,
-                  fontSize: 20,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 class _ActivityTabs extends StatelessWidget {
   final String selectedTab;
