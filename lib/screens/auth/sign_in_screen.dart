@@ -16,7 +16,7 @@ class _SignInScreenState extends State<SignInScreen> {
   static const _errorColor = Color(0xFF9A3F36);
   static const _errorBackground = Color(0xFFF4E4E1);
 
-  final formKey = GlobalKey<FormState>();
+  GlobalKey<FormState> formKey = GlobalKey<FormState>();
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
   final confirmPasswordController = TextEditingController();
@@ -25,7 +25,9 @@ class _SignInScreenState extends State<SignInScreen> {
   final passwordFocusNode = FocusNode();
   final confirmPasswordFocusNode = FocusNode();
 
-  final AuthService authService = AuthService();
+  AuthService? _authService;
+
+  AuthService get authService => _authService ??= AuthService();
 
   bool isRegisterMode = false;
   bool isLoading = false;
@@ -73,7 +75,12 @@ class _SignInScreenState extends State<SignInScreen> {
         await authService.signIn(email: email, password: password);
       }
     } on FirebaseAuthException catch (error) {
-      if (!mounted) {
+      if (!mounted ||
+          !_submissionStillMatches(
+            email: email,
+            password: password,
+            registerMode: registerMode,
+          )) {
         return;
       }
 
@@ -81,7 +88,12 @@ class _SignInScreenState extends State<SignInScreen> {
         errorMessage = AuthFormValidation.firebaseErrorMessage(error.code);
       });
     } catch (_) {
-      if (!mounted) {
+      if (!mounted ||
+          !_submissionStillMatches(
+            email: email,
+            password: password,
+            registerMode: registerMode,
+          )) {
         return;
       }
 
@@ -107,6 +119,16 @@ class _SignInScreenState extends State<SignInScreen> {
     });
   }
 
+  bool _submissionStillMatches({
+    required String email,
+    required String password,
+    required bool registerMode,
+  }) {
+    return emailController.text.trim() == email &&
+        passwordController.text == password &&
+        isRegisterMode == registerMode;
+  }
+
   void _switchMode() {
     if (isLoading) {
       return;
@@ -116,6 +138,7 @@ class _SignInScreenState extends State<SignInScreen> {
 
     setState(() {
       isRegisterMode = !isRegisterMode;
+      formKey = GlobalKey<FormState>();
       errorMessage = null;
       confirmPasswordController.clear();
       obscurePassword = true;
@@ -219,6 +242,7 @@ class _SignInScreenState extends State<SignInScreen> {
                                   _AuthTextField(
                                     controller: emailController,
                                     focusNode: emailFocusNode,
+                                    enabled: !isLoading,
                                     hintText: 'you@example.com',
                                     keyboardType: TextInputType.emailAddress,
                                     textInputAction: TextInputAction.next,
@@ -239,6 +263,7 @@ class _SignInScreenState extends State<SignInScreen> {
                                   _AuthTextField(
                                     controller: passwordController,
                                     focusNode: passwordFocusNode,
+                                    enabled: !isLoading,
                                     hintText: isRegisterMode
                                         ? 'At least 6 characters'
                                         : 'Enter your password',
@@ -286,6 +311,7 @@ class _SignInScreenState extends State<SignInScreen> {
                                     _AuthTextField(
                                       controller: confirmPasswordController,
                                       focusNode: confirmPasswordFocusNode,
+                                      enabled: !isLoading,
                                       hintText: 'Re-enter your password',
                                       obscureText: obscureConfirmPassword,
                                       enableSuggestions: false,
@@ -366,8 +392,8 @@ class _SignInScreenState extends State<SignInScreen> {
                           'your items. always ready.',
                           textAlign: TextAlign.center,
                           style: AppTextStyles.pixel.copyWith(
-                            fontSize: 7,
-                            color: AppColors.muted.withValues(alpha: .65),
+                            fontSize: 8,
+                            color: AppColors.muted,
                           ),
                         ),
                         ],
@@ -525,6 +551,7 @@ class _AuthTextField extends StatelessWidget {
   final TextEditingController controller;
   final FocusNode focusNode;
   final String hintText;
+  final bool enabled;
   final TextInputType? keyboardType;
   final TextInputAction? textInputAction;
   final Iterable<String>? autofillHints;
@@ -541,6 +568,7 @@ class _AuthTextField extends StatelessWidget {
     required this.focusNode,
     required this.hintText,
     required this.validator,
+    this.enabled = true,
     this.keyboardType,
     this.textInputAction,
     this.autofillHints,
@@ -557,6 +585,7 @@ class _AuthTextField extends StatelessWidget {
     return TextFormField(
       controller: controller,
       focusNode: focusNode,
+      enabled: enabled,
       keyboardType: keyboardType,
       textInputAction: textInputAction,
       autofillHints: autofillHints,
@@ -571,7 +600,9 @@ class _AuthTextField extends StatelessWidget {
         hintText: hintText,
         hintStyle: AppTextStyles.body.copyWith(fontSize: 13),
         filled: true,
-        fillColor: AppColors.background,
+        fillColor: enabled
+            ? AppColors.background
+            : AppColors.card.withValues(alpha: .45),
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 14,
           vertical: 13,
@@ -588,6 +619,13 @@ class _AuthTextField extends StatelessWidget {
         ),
         enabledBorder: OutlineInputBorder(
           borderSide: const BorderSide(color: AppColors.ink, width: 2),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        disabledBorder: OutlineInputBorder(
+          borderSide: BorderSide(
+            color: AppColors.muted.withValues(alpha: .7),
+            width: 2,
+          ),
           borderRadius: BorderRadius.circular(4),
         ),
         focusedBorder: OutlineInputBorder(
