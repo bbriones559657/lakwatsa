@@ -72,24 +72,20 @@ class FirestoreActivityRepository implements ActivityRepository {
       checkType: checkType,
     ).get();
 
-    final data = document.data();
-    if (data == null) return null;
+    return _activityCheckDraftFromData(document.data());
+  }
 
-    final methods = <String, String>{};
-    final raw = data['foundMethods'];
-    if (raw is Map) {
-      for (final entry in raw.entries) {
-        if (entry.key is String &&
-            (entry.value == 'QR' || entry.value == 'MANUAL')) {
-          methods[entry.key as String] = entry.value as String;
-        }
-      }
-    }
-
-    return ActivityCheckDraft(
-      startedAt: _toDateTime(data['startedAt']) ?? DateTime.now(),
-      foundMethods: methods,
-    );
+  @override
+  Stream<ActivityCheckDraft?> watchCheckDraft({
+    required String activityId,
+    required String checkType,
+  }) {
+    return _draftDocument(
+      activityId: activityId,
+      checkType: checkType,
+    ).snapshots().map((document) {
+      return _activityCheckDraftFromData(document.data());
+    });
   }
 
   @override
@@ -821,6 +817,28 @@ class FirestoreActivityRepository implements ActivityRepository {
         checkedAt: found ? completedAt : null,
       );
     }).toList();
+  }
+
+  ActivityCheckDraft? _activityCheckDraftFromData(
+    Map<String, dynamic>? data,
+  ) {
+    if (data == null) return null;
+
+    final methods = <String, String>{};
+    final raw = data['foundMethods'];
+    if (raw is Map) {
+      for (final entry in raw.entries) {
+        if (entry.key is String &&
+            (entry.value == 'QR' || entry.value == 'MANUAL')) {
+          methods[entry.key as String] = entry.value as String;
+        }
+      }
+    }
+
+    return ActivityCheckDraft(
+      startedAt: _toDateTime(data['startedAt']) ?? DateTime.now(),
+      foundMethods: methods,
+    );
   }
 
   List<String>? _stringList(dynamic raw) {

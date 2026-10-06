@@ -9,7 +9,9 @@ import '../../theme/app_theme.dart';
 import '../../widgets/lakwatsa_ui.dart';
 
 class ActivitiesScreen extends StatefulWidget {
-  const ActivitiesScreen({super.key});
+  final String initialTab;
+
+  const ActivitiesScreen({super.key, this.initialTab = 'UPCOMING'});
 
   @override
   State<ActivitiesScreen> createState() => _ActivitiesScreenState();
@@ -18,11 +20,12 @@ class ActivitiesScreen extends StatefulWidget {
 class _ActivitiesScreenState extends State<ActivitiesScreen> {
   FirestoreActivityRepository? activityRepository;
 
-  String selectedTab = 'UPCOMING';
+  late String selectedTab;
 
   @override
   void initState() {
     super.initState();
+    selectedTab = widget.initialTab;
 
     final user = AuthService().currentUser;
 

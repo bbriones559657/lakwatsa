@@ -8,7 +8,9 @@ import '../../widgets/lakwatsa_ui.dart';
 import 'list_details_screen.dart';
 
 class ListsScreen extends StatefulWidget {
-  const ListsScreen({super.key});
+  final bool openCreateOnStart;
+
+  const ListsScreen({super.key, this.openCreateOnStart = false});
 
   @override
   State<ListsScreen> createState() => _ListsScreenState();
@@ -29,6 +31,14 @@ class _ListsScreenState extends State<ListsScreen> {
 
     if (user != null) {
       listRepository = FirestoreListRepository(userId: user.uid);
+    }
+
+    if (widget.openCreateOnStart) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _showCreateListDialog();
+        }
+      });
     }
   }
 
@@ -54,7 +64,7 @@ class _ListsScreenState extends State<ListsScreen> {
                     LakwatsaHeaderAction(
                       text: editMode ? 'Save' : 'Edit',
                       label: editMode ? 'Save list changes' : 'Edit lists',
-                      filled: editMode,
+                      bordered: false,
                       onPressed: () {
                         setState(() {
                           editMode = !editMode;

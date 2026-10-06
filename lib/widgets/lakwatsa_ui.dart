@@ -98,6 +98,7 @@ class LakwatsaHeaderAction extends StatelessWidget {
   final String? text;
   final IconData? icon;
   final bool filled;
+  final bool bordered;
   final double? width;
 
   const LakwatsaHeaderAction({
@@ -107,6 +108,7 @@ class LakwatsaHeaderAction extends StatelessWidget {
     this.text,
     this.icon,
     this.filled = false,
+    this.bordered = true,
     this.width,
   }) : assert(text != null || icon != null);
 
@@ -114,22 +116,17 @@ class LakwatsaHeaderAction extends StatelessWidget {
   Widget build(BuildContext context) {
     final enabled = onPressed != null;
     final foreground = filled ? AppColors.background : AppColors.ink;
+    final compactVisual = icon != null || text == '+';
+    final visualWidth = width ?? (compactVisual ? 36.0 : null);
 
-    return Tooltip(
-      message: label,
-      child: Semantics(
-        button: true,
-        enabled: enabled,
-        label: label,
-        child: Opacity(
-          opacity: enabled ? 1 : .5,
-          child: Container(
-            width: width,
-            constraints: const BoxConstraints(
-              minWidth: AppMetrics.touchTarget,
-              minHeight: AppMetrics.touchTarget,
-            ),
-            decoration: BoxDecoration(
+    final visual = Container(
+      width: visualWidth,
+      height: 36,
+      padding: EdgeInsets.symmetric(
+        horizontal: compactVisual ? 0 : 4,
+      ),
+      decoration: bordered
+          ? BoxDecoration(
               color: filled ? AppColors.ink : AppColors.background,
               border: Border.all(
                 color: AppColors.ink,
@@ -138,38 +135,46 @@ class LakwatsaHeaderAction extends StatelessWidget {
                     : AppMetrics.borderWidth,
               ),
               borderRadius: BorderRadius.circular(AppMetrics.radius),
-              boxShadow: filled
-                  ? const [
-                      BoxShadow(
-                        color: AppColors.green,
-                        offset: Offset(3, 3),
-                      ),
-                    ]
-                  : null,
+            )
+          : null,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(AppMetrics.radius),
+          child: Center(
+            child: icon != null
+                ? Icon(icon, color: foreground, size: 18)
+                : Text(
+                    text!,
+                    maxLines: 1,
+                    style: AppTextStyles.bodyBold.copyWith(
+                      color: foreground,
+                      fontSize: text == '+' ? 20 : 12,
+                    ),
+                  ),
+          ),
+        ),
+      ),
+    );
+
+    return Tooltip(
+      message: label,
+      child: Semantics(
+        button: true,
+        enabled: enabled,
+        label: label,
+        excludeSemantics: true,
+        child: Opacity(
+          opacity: enabled ? 1 : .5,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(
+              minWidth: AppMetrics.touchTarget,
+              minHeight: AppMetrics.touchTarget,
             ),
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
-                onTap: onPressed,
-                borderRadius: BorderRadius.circular(AppMetrics.radius),
-                child: Padding(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: width == null && text != null ? 12 : 0,
-                  ),
-                  child: Center(
-                    child: icon != null
-                        ? Icon(icon, color: foreground, size: 19)
-                        : Text(
-                            text!,
-                            maxLines: 1,
-                            style: AppTextStyles.bodyBold.copyWith(
-                              color: foreground,
-                              fontSize: text == '+' ? 20 : 13,
-                            ),
-                          ),
-                  ),
-                ),
-              ),
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: visual,
             ),
           ),
         ),

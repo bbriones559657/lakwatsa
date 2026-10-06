@@ -5,6 +5,7 @@ import '../../models/activity_item.dart';
 import '../../repositories/firestore_activity_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/check_draft_writer.dart';
+import 'activity_check_error_text.dart';
 import 'activity_qr_scanner_screen.dart';
 import '../../theme/app_theme.dart';
 
@@ -172,13 +173,17 @@ class _ActivityCheckScreenState extends State<ActivityCheckScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: Row(
                   children: [
-                    const Expanded(
-                      child: Text('Progress not saved. Check your connection.'),
+                    Expanded(
+                      child: Text(
+                        activityDraftSaveErrorMessage(_saveError!),
+                        style: AppTextStyles.body,
+                      ),
                     ),
-                    TextButton(
-                      onPressed: _saveDraft,
-                      child: const Text('Retry'),
-                    ),
+                    if (!isLegacyActivityMigrationError(_saveError!))
+                      TextButton(
+                        onPressed: _saveDraft,
+                        child: const Text('Retry'),
+                      ),
                   ],
                 ),
               ),
@@ -410,7 +415,7 @@ class _ActivityCheckScreenState extends State<ActivityCheckScreen> {
       }
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to finish checking: $error')),
+        SnackBar(content: Text(activityCheckFinishErrorMessage(error))),
       );
     } finally {
       if (mounted) {

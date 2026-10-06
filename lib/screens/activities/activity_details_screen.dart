@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../../models/activity.dart' as model;
+import '../../models/activity_check_draft.dart';
 import '../../models/activity_item.dart';
 import '../../models/item.dart';
+import '../../repositories/activity_repository.dart';
 import '../../repositories/firestore_activity_repository.dart';
 import '../../services/auth_service.dart';
 import '../lists/add_items_screen.dart';
@@ -14,15 +16,20 @@ import '../../theme/app_theme.dart';
 
 class ActivityDetailsScreen extends StatefulWidget {
   final model.Activity activity;
+  final ActivityRepository? activityRepository;
 
-  const ActivityDetailsScreen({super.key, required this.activity});
+  const ActivityDetailsScreen({
+    super.key,
+    required this.activity,
+    this.activityRepository,
+  });
 
   @override
   State<ActivityDetailsScreen> createState() => _ActivityDetailsScreenState();
 }
 
 class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
-  FirestoreActivityRepository? activityRepository;
+  ActivityRepository? activityRepository;
   Stream<List<ActivityItem>>? activityItemsStream;
   late model.Activity activity;
   bool isManagingItems = false;
@@ -32,13 +39,15 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
     super.initState();
     activity = widget.activity;
 
-    final user = AuthService().currentUser;
+    activityRepository = widget.activityRepository;
+    final user = activityRepository == null ? AuthService().currentUser : null;
 
-    if (user != null) {
+    if (activityRepository == null && user != null) {
       activityRepository = FirestoreActivityRepository(userId: user.uid);
-      activityItemsStream = activityRepository!.watchActivityItems(
-        activity.id,
-      );
+    }
+
+    if (activityRepository != null) {
+      activityItemsStream = activityRepository!.watchActivityItems(activity.id);
     }
   }
 
@@ -157,11 +166,38 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
 
             const SizedBox(height: 14),
 
-            _ActionButton(
-              activity: activity,
-              onPressed: isManagingItems ? null : _handleAction,
-            ),
+            _buildCheckAction(),
           ],
+        );
+      },
+    );
+  }
+
+  Widget _buildCheckAction() {
+    final checkType = switch (activity.status) {
+      'UPCOMING' => 'BEFORE_ACTIVITY',
+      'ACTIVE' => 'RETURN',
+      _ => null,
+    };
+
+    if (checkType == null || activityRepository == null) {
+      return _ActionButton(
+        activity: activity,
+        hasDraft: false,
+        onPressed: isManagingItems ? null : _handleAction,
+      );
+    }
+
+    return StreamBuilder<ActivityCheckDraft?>(
+      stream: activityRepository!.watchCheckDraft(
+        activityId: activity.id,
+        checkType: checkType,
+      ),
+      builder: (context, snapshot) {
+        return _ActionButton(
+          activity: activity,
+          hasDraft: snapshot.data != null,
+          onPressed: isManagingItems ? null : _handleAction,
         );
       },
     );
@@ -767,9 +803,14 @@ class _ItemManagementButton extends StatelessWidget {
 
 class _ActionButton extends StatelessWidget {
   final model.Activity activity;
+  final bool hasDraft;
   final VoidCallback? onPressed;
 
-  const _ActionButton({required this.activity, required this.onPressed});
+  const _ActionButton({
+    required this.activity,
+    required this.hasDraft,
+    required this.onPressed,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -777,7 +818,7 @@ class _ActionButton extends StatelessWidget {
 
     switch (activity.status) {
       case 'ACTIVE':
-        text = 'Check Items Before Going Home';
+        text = hasDraft ? 'Continue Checking' : 'Check Items Before Going Home';
         break;
 
       case 'COMPLETED':
@@ -785,7 +826,7 @@ class _ActionButton extends StatelessWidget {
         break;
 
       default:
-        text = 'Check Items Before Leaving';
+        text = hasDraft ? 'Continue Checking' : 'Check Items Before Leaving';
     }
 
     final enabled = onPressed != null;

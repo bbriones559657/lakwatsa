@@ -11,6 +11,11 @@ abstract class ActivityRepository {
     required String checkType,
   });
 
+  Stream<ActivityCheckDraft?> watchCheckDraft({
+    required String activityId,
+    required String checkType,
+  });
+
   Future<void> saveCheckDraft({
     required String activityId,
     required String checkType,

@@ -2,16 +2,23 @@ import 'package:flutter/material.dart';
 
 import '../../models/activity.dart' as model;
 import '../../models/activity_item.dart';
+import '../../repositories/activity_repository.dart';
 import '../../repositories/firestore_activity_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/check_draft_writer.dart';
 import '../../theme/app_theme.dart';
+import 'activity_check_error_text.dart';
 import 'activity_qr_scanner_screen.dart';
 
 class ActivityReturnCheckScreen extends StatefulWidget {
   final model.Activity activity;
+  final ActivityRepository? activityRepository;
 
-  const ActivityReturnCheckScreen({super.key, required this.activity});
+  const ActivityReturnCheckScreen({
+    super.key,
+    required this.activity,
+    this.activityRepository,
+  });
 
   @override
   State<ActivityReturnCheckScreen> createState() =>
@@ -19,7 +26,7 @@ class ActivityReturnCheckScreen extends StatefulWidget {
 }
 
 class _ActivityReturnCheckScreenState extends State<ActivityReturnCheckScreen> {
-  FirestoreActivityRepository? activityRepository;
+  ActivityRepository? activityRepository;
 
   // Reuse the Firestore subscription instead of restarting it on every tap.
   Stream<List<ActivityItem>>? _activityItemsStream;
@@ -40,10 +47,14 @@ class _ActivityReturnCheckScreenState extends State<ActivityReturnCheckScreen> {
 
     checkStartedAt = DateTime.now();
 
-    final user = AuthService().currentUser;
+    activityRepository = widget.activityRepository;
+    final user = activityRepository == null ? AuthService().currentUser : null;
 
-    if (user != null) {
+    if (activityRepository == null && user != null) {
       activityRepository = FirestoreActivityRepository(userId: user.uid);
+    }
+
+    if (activityRepository != null) {
       _activityItemsStream =
           activityRepository!.watchActivityItems(widget.activity.id);
       _draftWriter = CheckDraftWriter(
@@ -82,6 +93,13 @@ class _ActivityReturnCheckScreenState extends State<ActivityReturnCheckScreen> {
         }
         _loadError = null;
       });
+
+      if (draft == null) {
+        // Opening Return Check starts the session. Persist an empty draft so
+        // Home and Activity Details can offer "Continue Checking" even if
+        // the user leaves before confirming the first Item.
+        _saveDraft();
+      }
     } catch (error) {
       if (mounted) setState(() => _loadError = error);
     } finally {
@@ -172,13 +190,17 @@ class _ActivityReturnCheckScreenState extends State<ActivityReturnCheckScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: Row(
                   children: [
-                    const Expanded(
-                      child: Text('Progress not saved. Check your connection.'),
+                    Expanded(
+                      child: Text(
+                        activityDraftSaveErrorMessage(_saveError!),
+                        style: AppTextStyles.body,
+                      ),
                     ),
-                    TextButton(
-                      onPressed: _saveDraft,
-                      child: const Text('Retry'),
-                    ),
+                    if (!isLegacyActivityMigrationError(_saveError!))
+                      TextButton(
+                        onPressed: _saveDraft,
+                        child: const Text('Retry'),
+                      ),
                   ],
                 ),
               ),
@@ -419,7 +441,7 @@ class _ActivityReturnCheckScreenState extends State<ActivityReturnCheckScreen> {
       }
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to finish Activity: $error')),
+        SnackBar(content: Text(activityCheckFinishErrorMessage(error))),
       );
     } finally {
       if (mounted) {
