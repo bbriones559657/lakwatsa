@@ -82,12 +82,15 @@ class FirestoreItemCategoryRepository implements ItemCategoryRepository {
 
   @override
   Future<bool> isCategoryInUse(String name) async {
-    final result = await _itemsCollection
-        .where('category', isEqualTo: name)
-        .limit(1)
-        .get();
+    // Item category values are legacy string snapshots and may differ only in
+    // casing or surrounding whitespace. Firestore equality queries are case
+    // sensitive, so inspect the user's Item snapshots before allowing delete.
+    final snapshot = await _itemsCollection.get();
 
-    return result.docs.isNotEmpty;
+    return snapshot.docs.any((document) {
+      final storedCategory = document.data()['category'] as String? ?? '';
+      return ItemCategory.sameName(storedCategory, name);
+    });
   }
 
   @override

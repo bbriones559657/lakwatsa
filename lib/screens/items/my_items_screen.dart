@@ -188,18 +188,12 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
       ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
 
     for (final name in [...customNames, ...legacyNames]) {
-      if (!_containsCategoryName(names, name)) {
+      if (!names.any((existing) => ItemCategory.sameName(existing, name))) {
         names.add(name);
       }
     }
 
     return names;
-  }
-
-  bool _containsCategoryName(List<String> names, String candidate) {
-    final normalized = candidate.trim().toLowerCase();
-
-    return names.any((name) => name.trim().toLowerCase() == normalized);
   }
 
   List<Item> _filterItems(List<Item> items, String activeCategory) {
@@ -210,7 +204,7 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
           search.isEmpty || item.name.toLowerCase().contains(search);
 
       final matchesCategory = activeCategory == 'All' ||
-          _sameCategoryName(item.category, activeCategory);
+          ItemCategory.sameName(item.category, activeCategory);
 
       return matchesSearch && matchesCategory;
     }).toList();
@@ -225,7 +219,7 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
       }
 
       final categoryItems = items
-          .where((item) => _sameCategoryName(item.category, category))
+          .where((item) => ItemCategory.sameName(item.category, category))
           .toList();
 
       if (categoryItems.isEmpty) {
@@ -236,10 +230,6 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
     }
 
     return widgets;
-  }
-
-  bool _sameCategoryName(String a, String b) {
-    return a.trim().toLowerCase() == b.trim().toLowerCase();
   }
 
   Future<void> _openAddItem() async {
@@ -471,7 +461,7 @@ class _CategoryChips extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 32,
+      height: 44,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -508,21 +498,28 @@ class _CategoryChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        decoration: BoxDecoration(
-          color: selected ? AppColors.ink : AppColors.background,
-          border: Border.all(color: AppColors.ink, width: 2),
-          borderRadius: BorderRadius.circular(14),
-        ),
-        alignment: Alignment.center,
-        child: Text(
-          text,
-          style: AppTextStyles.bodyBold.copyWith(
-            fontSize: 11,
-            color: selected ? AppColors.background : AppColors.ink,
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: 'Filter by $text',
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          decoration: BoxDecoration(
+            color: selected ? AppColors.ink : AppColors.background,
+            border: Border.all(color: AppColors.ink, width: 2),
+            borderRadius: BorderRadius.circular(18),
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            text,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTextStyles.bodyBold.copyWith(
+              fontSize: 11,
+              color: selected ? AppColors.background : AppColors.ink,
+            ),
           ),
         ),
       ),
@@ -545,15 +542,19 @@ class _ItemSection extends StatelessWidget {
         children: [
           Row(
             children: [
-              Text(
-                title,
-                style: AppTextStyles.pixelDark.copyWith(
-                  color: AppColors.ink,
-                  fontSize: 7,
+              Expanded(
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTextStyles.pixelDark.copyWith(
+                    color: AppColors.ink,
+                    fontSize: 7,
+                  ),
                 ),
               ),
 
-              const Spacer(),
+              const SizedBox(width: 12),
 
               Text(
                 '${items.length} '

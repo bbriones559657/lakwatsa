@@ -76,14 +76,14 @@ class _AddItemScreenState extends State<AddItemScreen> {
     );
   }
 
-  Future<bool> _selectedCategoryIsAvailable() async {
-    if (ItemCategory.isBuiltInName(selectedCategory)) {
+  Future<bool> _selectedCategoryIsAvailable(String category) async {
+    if (ItemCategory.isBuiltInName(category)) {
       return true;
     }
 
     final originalCategory = widget.item?.category;
 
-    if (widget.isEditing && originalCategory == selectedCategory) {
+    if (widget.isEditing && originalCategory == category) {
       // Existing Items keep their stored category snapshot even if its custom
       // category definition was later removed.
       return true;
@@ -95,10 +95,14 @@ class _AddItemScreenState extends State<AddItemScreen> {
       return false;
     }
 
-    return repository.categoryExists(selectedCategory);
+    return repository.categoryExists(category);
   }
 
   Future<void> _saveItem() async {
+    if (isSaving || isDeleting) {
+      return;
+    }
+
     final itemName = itemNameController.text.trim();
 
     if (itemName.isEmpty) {
@@ -119,31 +123,33 @@ class _AddItemScreenState extends State<AddItemScreen> {
       return;
     }
 
-    if (!await _selectedCategoryIsAvailable()) {
-      if (!mounted) {
-        return;
-      }
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'That category is no longer available. Choose another category.',
-          ),
-        ),
-      );
-
-      return;
-    }
-
-    if (!mounted) {
-      return;
-    }
+    // Snapshot every value before the first await. Setting the busy flag here
+    // makes the save single-flight even when category validation needs a read.
+    final category = selectedCategory;
+    final itemQuantity = quantity;
+    final createQrCode = hasQrCode;
 
     setState(() {
       isSaving = true;
     });
 
     try {
+      if (!await _selectedCategoryIsAvailable(category)) {
+        if (!mounted) {
+          return;
+        }
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'That category is no longer available. Choose another category.',
+            ),
+          ),
+        );
+
+        return;
+      }
+
       final repository = FirestoreItemRepository(userId: user.uid);
 
       if (widget.isEditing) {
@@ -156,11 +162,11 @@ class _AddItemScreenState extends State<AddItemScreen> {
         final updatedItem = Item(
           id: oldItem.id,
           name: itemName,
-          category: selectedCategory,
-          quantity: quantity,
-          icon: selectedCategory == oldItem.category
+          category: category,
+          quantity: itemQuantity,
+          icon: category == oldItem.category
               ? oldItem.icon
-              : _getIconKey(selectedCategory),
+              : _getIconKey(category),
           photoUrl: oldItem.photoUrl,
 
           // Important:
@@ -179,13 +185,13 @@ class _AddItemScreenState extends State<AddItemScreen> {
         final newItem = Item(
           id: '',
           name: itemName,
-          category: selectedCategory,
-          quantity: quantity,
-          icon: _getIconKey(selectedCategory),
+          category: category,
+          quantity: itemQuantity,
+          icon: _getIconKey(category),
 
           // The toggle is only used while
           // creating a new item.
-          qrCode: hasQrCode ? 'lakwatsa:item:${const Uuid().v4()}' : null,
+          qrCode: createQrCode ? 'lakwatsa:item:${const Uuid().v4()}' : null,
         );
 
         await repository.addItem(newItem);
@@ -514,7 +520,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
         value: selectedCategory,
         categories: _categoryNames(const []),
         unavailableValue: _isUnavailableSelection(const []),
-        onChanged: _selectCategory,
+        onChanged: isSaving ? null : _selectCategory,
       );
     }
 
@@ -533,7 +539,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
               value: selectedCategory,
               categories: _categoryNames(customCategories),
               unavailableValue: unavailableValue,
-              onChanged: _selectCategory,
+              onChanged: isSaving ? null : _selectCategory,
             ),
             if (snapshot.hasError) ...[
               const SizedBox(height: 6),
@@ -982,7 +988,7 @@ class _CategoryDropdown extends StatelessWidget {
   final String value;
   final List<String> categories;
   final String? unavailableValue;
-  final ValueChanged<String> onChanged;
+  final ValueChanged<String>? onChanged;
 
   const _CategoryDropdown({
     required this.value,
@@ -1026,11 +1032,13 @@ class _CategoryDropdown extends StatelessWidget {
               ),
             );
           }).toList(),
-          onChanged: (value) {
-            if (value != null) {
-              onChanged(value);
-            }
-          },
+          onChanged: onChanged == null
+              ? null
+              : (value) {
+                  if (value != null) {
+                    onChanged!(value);
+                  }
+                },
         ),
       ),
     );

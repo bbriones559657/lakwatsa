@@ -31,4 +31,9 @@ void main() {
       throwsArgumentError,
     );
   });
+
+  test('Item category name comparison ignores case and surrounding spaces', () {
+    expect(ItemCategory.sameName('Travel Gear', ' travel gear '), isTrue);
+    expect(ItemCategory.sameName('Travel Gear', 'Travel Bags'), isFalse);
+  });
 }

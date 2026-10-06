@@ -31,6 +31,10 @@ class ItemCategory {
     return builtInNames.any((name) => name.toLowerCase() == normalized);
   }
 
+  static bool sameName(String a, String b) {
+    return a.trim().toLowerCase() == b.trim().toLowerCase();
+  }
+
   static String validateCustomName(String value) {
     final name = value.trim();
 
