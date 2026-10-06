@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 
 import '../../models/item.dart';
+import '../../models/item_category.dart';
+import '../../repositories/firestore_item_category_repository.dart';
 import '../../repositories/firestore_item_repository.dart';
 import '../../services/auth_service.dart';
 import '../../theme/app_theme.dart';
 import 'add_item_screen.dart';
+import 'manage_categories_screen.dart';
 
 class MyItemsScreen extends StatefulWidget {
   const MyItemsScreen({super.key});
@@ -17,17 +20,9 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
   final TextEditingController searchController = TextEditingController();
 
   FirestoreItemRepository? itemRepository;
+  FirestoreItemCategoryRepository? categoryRepository;
 
   String selectedCategory = 'All';
-
-  final List<String> categories = [
-    'All',
-    'Electronics',
-    'Documents',
-    'Clothing',
-    'Toiletries',
-    'Other',
-  ];
 
   @override
   void initState() {
@@ -37,6 +32,7 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
 
     if (user != null) {
       itemRepository = FirestoreItemRepository(userId: user.uid);
+      categoryRepository = FirestoreItemCategoryRepository(userId: user.uid);
     }
   }
 
@@ -55,7 +51,10 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
           children: [
             const _StatusBar(),
 
-            _Header(onAdd: _openAddItem),
+            _Header(
+              onAdd: _openAddItem,
+              onCategories: _openCategories,
+            ),
 
             Expanded(child: _buildContent()),
           ],
@@ -65,99 +64,153 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
   }
 
   Widget _buildContent() {
-    if (itemRepository == null) {
+    if (itemRepository == null || categoryRepository == null) {
       return Center(
         child: Text('Please sign in again.', style: AppTextStyles.body),
       );
     }
 
-    return StreamBuilder<List<Item>>(
-      stream: itemRepository!.watchItems(),
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return Center(
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Text(
-                'Failed to load items.\n${snapshot.error}',
-                textAlign: TextAlign.center,
-                style: AppTextStyles.body,
-              ),
-            ),
-          );
-        }
+    return StreamBuilder<List<ItemCategory>>(
+      stream: categoryRepository!.watchCustomCategories(),
+      builder: (context, categorySnapshot) {
+        // My Items remains usable even if the optional custom-category stream
+        // is temporarily unavailable. Item snapshots still carry category names.
+        final customCategories = categorySnapshot.data ?? [];
+        final categoryLoadFailed = categorySnapshot.hasError;
 
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
+        return StreamBuilder<List<Item>>(
+          stream: itemRepository!.watchItems(),
+          builder: (context, snapshot) {
+            if (snapshot.hasError) {
+              return Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Text(
+                    'Failed to load items.\n${snapshot.error}',
+                    textAlign: TextAlign.center,
+                    style: AppTextStyles.body,
+                  ),
+                ),
+              );
+            }
 
-        final allItems = snapshot.data ?? [];
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
 
-        final filteredItems = _filterItems(allItems);
+            final allItems = snapshot.data ?? [];
+            final categories = _categoryNames(customCategories, allItems);
+            final activeCategory = categories.contains(selectedCategory)
+                ? selectedCategory
+                : 'All';
+            final filteredItems = _filterItems(allItems, activeCategory);
 
-        return ListView(
-          padding: const EdgeInsets.only(bottom: 24),
-          children: [
-            _SearchBar(
-              controller: searchController,
-              onChanged: (_) {
-                setState(() {});
-              },
-            ),
+            if (activeCategory != selectedCategory) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted && selectedCategory != 'All') {
+                  setState(() {
+                    selectedCategory = 'All';
+                  });
+                }
+              });
+            }
 
-            _CategoryChips(
-              categories: categories,
-              selectedCategory: selectedCategory,
-              onSelected: (category) {
-                setState(() {
-                  selectedCategory = category;
-                });
-              },
-            ),
+            return ListView(
+              padding: const EdgeInsets.only(bottom: 24),
+              children: [
+                _SearchBar(
+                  controller: searchController,
+                  onChanged: (_) {
+                    setState(() {});
+                  },
+                ),
 
-            const SizedBox(height: 12),
+                _CategoryChips(
+                  categories: categories,
+                  selectedCategory: activeCategory,
+                  onSelected: (category) {
+                    setState(() {
+                      selectedCategory = category;
+                    });
+                  },
+                ),
 
-            if (allItems.isEmpty)
-              const _EmptyState(
-                title: 'No items yet',
-                message: 'Add your first item to My Items.',
-              )
-            else if (filteredItems.isEmpty)
-              const _EmptyState(
-                title: 'No items found',
-                message: 'Try another search or category.',
-              )
-            else
-              ..._buildSections(filteredItems),
-          ],
+                if (categoryLoadFailed)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+                    child: Text(
+                      'Custom categories could not be refreshed. '
+                      'Your Items are still available.',
+                      style: AppTextStyles.body.copyWith(
+                        color: AppColors.muted,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+
+                const SizedBox(height: 12),
+
+                if (allItems.isEmpty)
+                  const _EmptyState(
+                    title: 'No items yet',
+                    message: 'Add your first item to My Items.',
+                  )
+                else if (filteredItems.isEmpty)
+                  const _EmptyState(
+                    title: 'No items found',
+                    message: 'Try another search or category.',
+                  )
+                else
+                  ..._buildSections(filteredItems, categories),
+              ],
+            );
+          },
         );
       },
     );
   }
 
-  List<Item> _filterItems(List<Item> items) {
+  List<String> _categoryNames(
+    List<ItemCategory> customCategories,
+    List<Item> items,
+  ) {
+    final names = <String>['All', ...ItemCategory.builtInNames];
+    final customNames = customCategories
+        .map((category) => category.name.trim())
+        .where((name) => name.isNotEmpty)
+        .toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    final legacyNames = items
+        .map((item) => item.category.trim())
+        .where((name) => name.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+
+    for (final name in [...customNames, ...legacyNames]) {
+      if (!names.any((existing) => ItemCategory.sameName(existing, name))) {
+        names.add(name);
+      }
+    }
+
+    return names;
+  }
+
+  List<Item> _filterItems(List<Item> items, String activeCategory) {
     final search = searchController.text.trim().toLowerCase();
 
     return items.where((item) {
       final matchesSearch =
           search.isEmpty || item.name.toLowerCase().contains(search);
 
-      final matchesCategory =
-          selectedCategory == 'All' || item.category == selectedCategory;
+      final matchesCategory = activeCategory == 'All' ||
+          ItemCategory.sameName(item.category, activeCategory);
 
       return matchesSearch && matchesCategory;
     }).toList();
   }
 
-  List<Widget> _buildSections(List<Item> items) {
-    final Map<String, List<Item>> groupedItems = {};
-
-    for (final item in items) {
-      groupedItems.putIfAbsent(item.category, () => []);
-
-      groupedItems[item.category]!.add(item);
-    }
-
+  List<Widget> _buildSections(List<Item> items, List<String> categories) {
     final widgets = <Widget>[];
 
     for (final category in categories) {
@@ -165,23 +218,15 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
         continue;
       }
 
-      final categoryItems = groupedItems[category];
+      final categoryItems = items
+          .where((item) => ItemCategory.sameName(item.category, category))
+          .toList();
 
-      if (categoryItems == null || categoryItems.isEmpty) {
+      if (categoryItems.isEmpty) {
         continue;
       }
 
       widgets.add(_ItemSection(title: category, items: categoryItems));
-    }
-
-    // Handles categories that may exist in Firestore
-    // but are not currently in our category list.
-    for (final entry in groupedItems.entries) {
-      if (categories.contains(entry.key)) {
-        continue;
-      }
-
-      widgets.add(_ItemSection(title: entry.key, items: entry.value));
     }
 
     return widgets;
@@ -195,6 +240,15 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
 
     // No manual refresh needed.
     // Firestore StreamBuilder updates automatically.
+  }
+
+  Future<void> _openCategories() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const ManageCategoriesScreen(),
+      ),
+    );
   }
 }
 
@@ -255,8 +309,12 @@ class _StatusBar extends StatelessWidget {
 
 class _Header extends StatelessWidget {
   final VoidCallback onAdd;
+  final VoidCallback onCategories;
 
-  const _Header({required this.onAdd});
+  const _Header({
+    required this.onAdd,
+    required this.onCategories,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -273,11 +331,21 @@ class _Header extends StatelessWidget {
 
           const Spacer(),
 
-          _HeaderButton(text: 'Q', filled: false, onTap: () {}),
+          _HeaderButton(
+            icon: Icons.category_outlined,
+            label: 'Manage categories',
+            filled: false,
+            onTap: onCategories,
+          ),
 
           const SizedBox(width: 10),
 
-          _HeaderButton(text: '+', filled: true, onTap: onAdd),
+          _HeaderButton(
+            text: '+',
+            label: 'Add item',
+            filled: true,
+            onTap: onAdd,
+          ),
         ],
       ),
     );
@@ -285,37 +353,56 @@ class _Header extends StatelessWidget {
 }
 
 class _HeaderButton extends StatelessWidget {
-  final String text;
+  final String? text;
+  final IconData? icon;
+  final String label;
   final bool filled;
   final VoidCallback onTap;
 
   const _HeaderButton({
-    required this.text,
+    this.text,
+    this.icon,
+    required this.label,
     required this.filled,
     required this.onTap,
-  });
+  }) : assert(text != null || icon != null);
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 36,
-        height: 36,
-        decoration: BoxDecoration(
-          color: filled ? AppColors.ink : AppColors.background,
-          border: Border.all(color: AppColors.ink, width: 2.5),
-          borderRadius: BorderRadius.circular(4),
-          boxShadow: filled
-              ? const [BoxShadow(color: AppColors.green, offset: Offset(3, 3))]
-              : null,
-        ),
-        alignment: Alignment.center,
-        child: Text(
-          text,
-          style: AppTextStyles.bodyBold.copyWith(
-            color: filled ? AppColors.background : AppColors.ink,
-            fontSize: text == '+' ? 20 : 14,
+    return Tooltip(
+      message: label,
+      child: Semantics(
+        button: true,
+        label: label,
+        child: GestureDetector(
+          onTap: onTap,
+          child: Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: filled ? AppColors.ink : AppColors.background,
+              border: Border.all(color: AppColors.ink, width: 2.5),
+              borderRadius: BorderRadius.circular(4),
+              boxShadow: filled
+                  ? const [
+                      BoxShadow(color: AppColors.green, offset: Offset(3, 3)),
+                    ]
+                  : null,
+            ),
+            alignment: Alignment.center,
+            child: icon != null
+                ? Icon(
+                    icon,
+                    color: filled ? AppColors.background : AppColors.ink,
+                    size: 19,
+                  )
+                : Text(
+                    text!,
+                    style: AppTextStyles.bodyBold.copyWith(
+                      color: filled ? AppColors.background : AppColors.ink,
+                      fontSize: text == '+' ? 20 : 14,
+                    ),
+                  ),
           ),
         ),
       ),
@@ -374,7 +461,7 @@ class _CategoryChips extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 32,
+      height: 44,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -411,21 +498,28 @@ class _CategoryChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        decoration: BoxDecoration(
-          color: selected ? AppColors.ink : AppColors.background,
-          border: Border.all(color: AppColors.ink, width: 2),
-          borderRadius: BorderRadius.circular(14),
-        ),
-        alignment: Alignment.center,
-        child: Text(
-          text,
-          style: AppTextStyles.bodyBold.copyWith(
-            fontSize: 11,
-            color: selected ? AppColors.background : AppColors.ink,
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: 'Filter by $text',
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          decoration: BoxDecoration(
+            color: selected ? AppColors.ink : AppColors.background,
+            border: Border.all(color: AppColors.ink, width: 2),
+            borderRadius: BorderRadius.circular(18),
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            text,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTextStyles.bodyBold.copyWith(
+              fontSize: 11,
+              color: selected ? AppColors.background : AppColors.ink,
+            ),
           ),
         ),
       ),
@@ -448,15 +542,19 @@ class _ItemSection extends StatelessWidget {
         children: [
           Row(
             children: [
-              Text(
-                title,
-                style: AppTextStyles.pixelDark.copyWith(
-                  color: AppColors.ink,
-                  fontSize: 7,
+              Expanded(
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTextStyles.pixelDark.copyWith(
+                    color: AppColors.ink,
+                    fontSize: 7,
+                  ),
                 ),
               ),
 
-              const Spacer(),
+              const SizedBox(width: 12),
 
               Text(
                 '${items.length} '

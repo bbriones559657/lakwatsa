@@ -21,6 +21,7 @@ const activityRef = db => doc(db, base);
 const checkRef = (db, id) => doc(db, `${base}/checks/${id}`);
 const checkItemRef = (db, id, itemId) => doc(db, `${base}/checks/${id}/items/${itemId}`);
 const activityItemRef = (db, itemId) => doc(db, `${base}/items/${itemId}`);
+const categoryRef = (db, id) => doc(db, `users/alice/categories/${id}`);
 
 const activityItem = (itemId = 'bottle', addedDuringActivity = false) => ({
   itemId, itemName: itemId, category: 'Other', quantity: 1, icon: 'inventory',
@@ -165,6 +166,60 @@ test('private Items and Lists are accessible to their owner only', async () => {
   await assertFails(getDoc(doc(anon, 'users/alice/items/bottle')));
   await assertSucceeds(setDoc(doc(alice, 'users/alice/lists/one'), {name: 'Camping'}));
   await assertFails(setDoc(doc(bob, 'users/alice/lists/two'), {name: 'Not yours'}));
+});
+
+test('custom Item categories are owner-only and schema-valid', async () => {
+  const alice = client();
+  const bob = client('bob');
+  const travel = categoryRef(alice, 'travel gear');
+
+  await assertSucceeds(setDoc(travel, {
+    name: 'Travel Gear',
+    createdAt: now,
+    updatedAt: now,
+  }));
+  await assertSucceeds(getDoc(travel));
+  await assertFails(getDoc(categoryRef(bob, 'travel gear')));
+  await assertFails(setDoc(categoryRef(bob, 'private'), {
+    name: 'Private',
+    createdAt: now,
+    updatedAt: now,
+  }));
+
+  await assertFails(setDoc(categoryRef(alice, 'electronics'), {
+    name: 'Electronics',
+    createdAt: now,
+    updatedAt: now,
+  }));
+  await assertFails(setDoc(categoryRef(alice, 'electronics'), {
+    name: 'electronics',
+    createdAt: now,
+    updatedAt: now,
+  }));
+  await assertFails(setDoc(categoryRef(alice, 'wrong-id'), {
+    name: 'Travel Gear',
+    createdAt: now,
+    updatedAt: now,
+  }));
+  await assertFails(setDoc(categoryRef(alice, ' travel gear '), {
+    name: ' Travel Gear ',
+    createdAt: now,
+    updatedAt: now,
+  }));
+  await assertFails(setDoc(categoryRef(alice, 'all'), {
+    name: 'All',
+    createdAt: now,
+    updatedAt: now,
+  }));
+  await assertFails(setDoc(categoryRef(alice, 'broken'), {
+    name: 'Broken',
+    createdAt: now,
+  }));
+  await assertFails(updateDoc(travel, {
+    name: 'Renamed',
+    updatedAt: later,
+  }));
+  await assertSucceeds(deleteDoc(travel));
 });
 
 test('new Activities must start UPCOMING and belong to the caller', async () => {
