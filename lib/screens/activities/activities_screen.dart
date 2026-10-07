@@ -114,6 +114,10 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
         final activities = snapshot.data ?? [];
 
         final filteredActivities = activities.where((activity) {
+          if (selectedTab == 'COMPLETED') {
+            return activity.isCompleted || activity.isCancelled;
+          }
+
           return activity.status == selectedTab;
         }).toList();
 
@@ -218,7 +222,7 @@ class _TabButton extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        height: 40,
+        height: AppMetrics.touchTarget,
         decoration: BoxDecoration(
           color: selected ? AppColors.ink : AppColors.background,
           border: Border.all(color: AppColors.ink, width: 2),
@@ -408,6 +412,10 @@ class _StatusBadge extends StatelessWidget {
         text = 'DONE';
         break;
 
+      case 'CANCELLED':
+        text = 'CANCELLED';
+        break;
+
       default:
         text = 'UPCOMING';
     }
@@ -415,7 +423,11 @@ class _StatusBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
       decoration: BoxDecoration(
-        color: status == 'ACTIVE' ? AppColors.green : AppColors.card,
+        color: status == 'ACTIVE'
+            ? AppColors.green
+            : status == 'CANCELLED'
+            ? AppColors.orange
+            : AppColors.card,
         border: Border.all(color: AppColors.ink, width: 1.5),
         borderRadius: BorderRadius.circular(3),
       ),
@@ -450,7 +462,7 @@ class _EmptyState extends StatelessWidget {
 
       case 'COMPLETED':
         title = 'No activity history';
-        message = 'Completed activities will appear here.';
+        message = 'Completed and cancelled activities will appear here.';
         icon = Icons.history;
         break;
 

@@ -3,15 +3,30 @@ import 'package:flutter/material.dart';
 import '../../models/activity.dart' as model;
 import '../../models/item.dart';
 import '../../models/item_list.dart';
+import '../../repositories/activity_repository.dart';
 import '../../repositories/firestore_activity_repository.dart';
 import '../../repositories/firestore_item_repository.dart';
 import '../../repositories/firestore_list_repository.dart';
+import '../../repositories/item_repository.dart';
+import '../../repositories/list_repository.dart';
 import '../../services/auth_service.dart';
 import '../../theme/app_theme.dart';
+import 'activity_item_selection.dart';
+import '../items/item_icon_catalog.dart';
 import '../lists/add_items_screen.dart';
+import '../lists/list_icon_catalog.dart';
 
 class CreateActivityScreen extends StatefulWidget {
-  const CreateActivityScreen({super.key});
+  final ActivityRepository? activityRepository;
+  final ItemRepository? itemRepository;
+  final ListRepository? listRepository;
+
+  const CreateActivityScreen({
+    super.key,
+    this.activityRepository,
+    this.itemRepository,
+    this.listRepository,
+  });
 
   @override
   State<CreateActivityScreen> createState() => _CreateActivityScreenState();
@@ -20,17 +35,33 @@ class CreateActivityScreen extends StatefulWidget {
 class _CreateActivityScreenState extends State<CreateActivityScreen> {
   final TextEditingController nameController = TextEditingController();
 
-  FirestoreListRepository? listRepository;
-  FirestoreItemRepository? itemRepository;
-  FirestoreActivityRepository? activityRepository;
+  ListRepository? listRepository;
+  ItemRepository? itemRepository;
+  ActivityRepository? activityRepository;
+
+  Stream<List<ItemList>>? listsStream;
+  final ScrollController activityItemsScrollController = ScrollController();
 
   String selectedType = 'Trip';
-  String? selectedListId;
 
-  List<Item> selectedActivityItems = [];
-  bool isLoadingSelectedList = false;
+  final Set<String> selectedListIds = <String>{};
+  List<Item> importedListItems = [];
+  final Map<String, Item> manuallyAddedItems = <String, Item>{};
+  final Set<String> removedItemIds = <String>{};
+  final Map<String, int> quantityOverrides = <String, int>{};
+
+  bool isLoadingSelectedLists = false;
   String? selectedListLoadError;
   int selectedListLoadVersion = 0;
+
+  List<Item> get selectedActivityItems {
+    return buildActivityItemSelection(
+      importedItems: importedListItems,
+      manuallyAddedItems: manuallyAddedItems.values,
+      removedItemIds: removedItemIds,
+      quantityOverrides: quantityOverrides,
+    );
+  }
 
   DateTime selectedDate = DateTime.now();
 
@@ -42,6 +73,12 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
   int reminderMinutes = 30;
 
   bool isSaving = false;
+  String? _partialActivityId;
+  List<Item> _missingCreationItems = const [];
+  String? _partialCreationError;
+  bool _showingPartialExitWarning = false;
+  bool _allowPartialExit = false;
+  bool _didPop = false;
 
   final List<String> activityTypes = [
     'Trip',
@@ -57,55 +94,74 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
   void initState() {
     super.initState();
 
-    final user = AuthService().currentUser;
+    listRepository = widget.listRepository;
+    itemRepository = widget.itemRepository;
+    activityRepository = widget.activityRepository;
+
+    final needsRepository =
+        listRepository == null ||
+        itemRepository == null ||
+        activityRepository == null;
+    final user = needsRepository ? AuthService().currentUser : null;
 
     if (user != null) {
-      listRepository = FirestoreListRepository(userId: user.uid);
-
-      itemRepository = FirestoreItemRepository(userId: user.uid);
-
-      activityRepository = FirestoreActivityRepository(userId: user.uid);
+      listRepository ??= FirestoreListRepository(userId: user.uid);
+      itemRepository ??= FirestoreItemRepository(userId: user.uid);
+      activityRepository ??= FirestoreActivityRepository(userId: user.uid);
     }
+
+    listsStream = listRepository?.watchLists();
   }
 
   @override
   void dispose() {
     nameController.dispose();
+    activityItemsScrollController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
+    return PopScope<Object?>(
+      canPop: _partialActivityId == null || _allowPartialExit,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) _didPop = true;
+        if (!didPop && _partialActivityId != null) _confirmPartialExit();
+      },
+      child: Scaffold(
         backgroundColor: AppColors.background,
-        foregroundColor: AppColors.ink,
-        elevation: 0,
-        title: Text(
-          'Create Activity',
-          style: AppTextStyles.heading.copyWith(fontSize: 21),
+        appBar: AppBar(
+          backgroundColor: AppColors.background,
+          foregroundColor: AppColors.ink,
+          elevation: 0,
+          title: Text(
+            'Create Activity',
+            style: AppTextStyles.heading.copyWith(fontSize: 21),
+          ),
+          bottom: PreferredSize(
+            preferredSize: const Size.fromHeight(2),
+            child: Container(height: 2, color: AppColors.ink),
+          ),
         ),
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(2),
-          child: Container(height: 2, color: AppColors.ink),
-        ),
+        body: _buildBody(),
       ),
-      body: _buildBody(),
     );
   }
 
   Widget _buildBody() {
     if (listRepository == null ||
         itemRepository == null ||
-        activityRepository == null) {
+        activityRepository == null ||
+        listsStream == null) {
       return Center(
         child: Text('Please sign in again.', style: AppTextStyles.body),
       );
     }
 
+    if (_partialActivityId != null) return _buildPartialCreationRecovery();
+
     return StreamBuilder<List<ItemList>>(
-      stream: listRepository!.watchLists(),
+      stream: listsStream,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return Center(
@@ -125,9 +181,7 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
         final lists = snapshot.data ?? [];
         final createBlockedBySelection =
             isSaving ||
-            lists.isEmpty ||
-            selectedListId == null ||
-            isLoadingSelectedList ||
+            isLoadingSelectedLists ||
             selectedListLoadError != null ||
             selectedActivityItems.isEmpty ||
             selectedActivityItems.length > 200;
@@ -170,34 +224,32 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
 
             const SizedBox(height: 20),
 
-            const _Label(text: 'Packing List'),
+            const _Label(text: 'Import from Lists'),
 
-            const SizedBox(height: 7),
+            const SizedBox(height: 5),
 
-            if (lists.isEmpty)
-              const _NoListsMessage()
-            else
-              DropdownButtonFormField<String>(
-                initialValue: selectedListId,
-                decoration: _inputDecoration('Choose a list'),
-                items: lists.map((list) {
-                  return DropdownMenuItem(
-                    value: list.id,
-                    child: Text(list.name),
-                  );
-                }).toList(),
-                onChanged: isSaving
-                    ? null
-                    : (value) {
-                        _selectPackingList(value);
-                      },
-              ),
+            Text(
+              'Optional. Select one or more reusable Lists. Overlapping Items are added once.',
+              style: AppTextStyles.body.copyWith(color: AppColors.muted),
+            ),
 
-            if (selectedListId != null) ...[
-              const SizedBox(height: 14),
+            const SizedBox(height: 9),
 
-              _buildSelectedListPreview(),
-            ],
+            _ListSelectorCard(
+              lists: lists,
+              selectedIds: selectedListIds,
+              disabled: isSaving || isLoadingSelectedLists || lists.isEmpty,
+              onChoose: () {
+                _choosePackingLists(lists);
+              },
+              onRemove: (listId) {
+                _removePackingList(listId);
+              },
+            ),
+
+            const SizedBox(height: 14),
+
+            _buildSelectedItemsPreview(),
 
             const SizedBox(height: 20),
 
@@ -392,7 +444,9 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
     );
   }
 
-  Widget _buildSelectedListPreview() {
+  Widget _buildSelectedItemsPreview() {
+    final items = selectedActivityItems;
+
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -409,23 +463,18 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
                 child: Text('Activity Items', style: AppTextStyles.bodyBold),
               ),
               Text(
-                '${selectedActivityItems.length} '
-                '${selectedActivityItems.length == 1 ? 'item' : 'items'}',
+                '${items.length} ${items.length == 1 ? 'item' : 'items'}',
                 style: AppTextStyles.body,
               ),
             ],
           ),
-
           const SizedBox(height: 5),
-
           Text(
-            'Changes here only affect this Activity, not the Packing List.',
+            'This becomes the Activity snapshot. Later List changes will not change this Activity.',
             style: AppTextStyles.body.copyWith(color: AppColors.muted),
           ),
-
           const SizedBox(height: 12),
-
-          if (isLoadingSelectedList)
+          if (isLoadingSelectedLists)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 18),
               child: Center(child: CircularProgressIndicator()),
@@ -434,37 +483,21 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
             Text(selectedListLoadError!, style: AppTextStyles.body),
             const SizedBox(height: 6),
             TextButton(
-              onPressed: isSaving
-                  ? null
-                  : () {
-                      _selectPackingList(selectedListId);
-                    },
+              onPressed: isSaving ? null : _reloadSelectedLists,
               child: const Text('Retry'),
             ),
-          ] else if (selectedActivityItems.isEmpty)
+          ] else if (items.isEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: Text(
-                'No items selected. Add at least one Item for this Activity.',
+                'No Items selected yet. Import a List or add Items from My Items.',
                 style: AppTextStyles.body,
               ),
             )
-          else
-            ...selectedActivityItems.map((item) {
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: _PreviewItem(
-                  item: item,
-                  onRemove: isSaving
-                      ? null
-                      : () {
-                          _removeSelectedItem(item.id);
-                        },
-                ),
-              );
-            }),
-
-          if (!isLoadingSelectedList && selectedListLoadError == null) ...[
+          else ...[
+            _buildActivityItemsViewport(items),
+          ],
+          if (!isLoadingSelectedLists && selectedListLoadError == null) ...[
             const SizedBox(height: 4),
             SizedBox(
               width: double.infinity,
@@ -480,54 +513,347 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
     );
   }
 
-  Future<void> _selectPackingList(String? listId) async {
-    final loadVersion = ++selectedListLoadVersion;
+  Widget _buildActivityItemsViewport(List<Item> items) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          constraints: const BoxConstraints(maxHeight: 286),
+          padding: const EdgeInsets.fromLTRB(8, 8, 4, 8),
+          decoration: BoxDecoration(
+            color: AppColors.background,
+            border: Border.all(color: AppColors.ink, width: 1.5),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Scrollbar(
+            controller: activityItemsScrollController,
+            thumbVisibility: items.length > 4,
+            child: ListView.separated(
+              controller: activityItemsScrollController,
+              primary: false,
+              shrinkWrap: true,
+              padding: const EdgeInsets.only(right: 5),
+              itemCount: items.length,
+              separatorBuilder: (context, index) {
+                return const SizedBox(height: 8);
+              },
+              itemBuilder: (context, index) {
+                final item = items[index];
+
+                return _PreviewItem(
+                  key: ValueKey(item.id),
+                  item: item,
+                  onDecrease: isSaving || item.quantity <= 1
+                      ? null
+                      : () {
+                          _changeItemQuantity(item.id, -1);
+                        },
+                  onIncrease: isSaving || item.quantity >= 999
+                      ? null
+                      : () {
+                          _changeItemQuantity(item.id, 1);
+                        },
+                  onRemove: isSaving
+                      ? null
+                      : () {
+                          _removeSelectedItem(item.id);
+                        },
+                );
+              },
+            ),
+          ),
+        ),
+        if (items.length > 4) ...[
+          const SizedBox(height: 6),
+          Text(
+            'Scroll inside the box to review all Activity Items.',
+            style: AppTextStyles.body.copyWith(
+              color: AppColors.muted,
+              fontSize: 11,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Future<void> _choosePackingLists(List<ItemList> lists) async {
+    if (isSaving || isLoadingSelectedLists) {
+      return;
+    }
+
+    final draftSelection = <String>{...selectedListIds};
+    final result = await showModalBottomSheet<Set<String>>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, setSheetState) {
+            return SafeArea(
+              top: false,
+              child: Container(
+                height: MediaQuery.sizeOf(sheetContext).height * .72,
+                decoration: const BoxDecoration(
+                  color: AppColors.background,
+                  border: Border(
+                    top: BorderSide(color: AppColors.ink, width: 2),
+                  ),
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                  boxShadow: [
+                    BoxShadow(color: AppColors.ink, offset: Offset(0, -5)),
+                  ],
+                ),
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 14, 12, 8),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Import from Lists',
+                              style: AppTextStyles.heading.copyWith(
+                                fontSize: 19,
+                              ),
+                            ),
+                          ),
+                          if (draftSelection.isNotEmpty)
+                            TextButton(
+                              onPressed: () {
+                                setSheetState(draftSelection.clear);
+                              },
+                              child: const Text('Clear'),
+                            ),
+                          IconButton(
+                            tooltip: 'Close List selector',
+                            onPressed: () {
+                              Navigator.pop(sheetContext);
+                            },
+                            icon: const Icon(Icons.close),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          lists.isEmpty
+                              ? 'No saved Lists yet. You can still add individual Items.'
+                              : 'Choose any Lists you want to combine for this Activity.',
+                          style: AppTextStyles.body.copyWith(
+                            color: AppColors.muted,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    if (lists.isNotEmpty)
+                      Flexible(
+                        child: ListView.separated(
+                          padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                          itemCount: lists.length,
+                          separatorBuilder: (_, _) => const SizedBox(height: 8),
+                          itemBuilder: (context, index) {
+                            final list = lists[index];
+                            final selected = draftSelection.contains(list.id);
+
+                            return Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                onTap: () {
+                                  setSheetState(() {
+                                    if (selected) {
+                                      draftSelection.remove(list.id);
+                                    } else {
+                                      draftSelection.add(list.id);
+                                    }
+                                  });
+                                },
+                                borderRadius: BorderRadius.circular(4),
+                                child: Container(
+                                  constraints: const BoxConstraints(
+                                    minHeight: 58,
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 8,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: selected
+                                        ? AppColors.card
+                                        : AppColors.background,
+                                    border: Border.all(
+                                      color: AppColors.ink,
+                                      width: selected ? 2 : 1.5,
+                                    ),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        width: 38,
+                                        height: 38,
+                                        decoration: BoxDecoration(
+                                          color: AppColors.card,
+                                          border: Border.all(
+                                            color: AppColors.ink,
+                                            width: 1.5,
+                                          ),
+                                          borderRadius: BorderRadius.circular(
+                                            3,
+                                          ),
+                                        ),
+                                        alignment: Alignment.center,
+                                        child: Icon(
+                                          listIconDataForKey(list.icon),
+                                          color: AppColors.ink,
+                                          size: 21,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Text(
+                                          list.name,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: AppTextStyles.bodyBold,
+                                        ),
+                                      ),
+                                      Container(
+                                        width: 24,
+                                        height: 24,
+                                        decoration: BoxDecoration(
+                                          color: selected
+                                              ? AppColors.green
+                                              : AppColors.background,
+                                          border: Border.all(
+                                            color: AppColors.ink,
+                                            width: 2,
+                                          ),
+                                          borderRadius: BorderRadius.circular(
+                                            3,
+                                          ),
+                                        ),
+                                        child: selected
+                                            ? const Icon(
+                                                Icons.check,
+                                                color: AppColors.background,
+                                                size: 17,
+                                              )
+                                            : null,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.ink,
+                            foregroundColor: AppColors.background,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          ),
+                          onPressed: () {
+                            Navigator.pop(sheetContext, <String>{
+                              ...draftSelection,
+                            });
+                          },
+                          child: Text(
+                            draftSelection.isEmpty
+                                ? 'Use Individual Items Only'
+                                : 'Import ${draftSelection.length} ${draftSelection.length == 1 ? 'List' : 'Lists'}',
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    if (!mounted || result == null) {
+      return;
+    }
 
     setState(() {
-      selectedListId = listId;
-      selectedActivityItems = [];
+      selectedListIds
+        ..clear()
+        ..addAll(result);
+    });
+    await _reloadSelectedLists();
+  }
+
+  Future<void> _removePackingList(String listId) async {
+    if (isSaving || isLoadingSelectedLists) {
+      return;
+    }
+
+    setState(() {
+      selectedListIds.remove(listId);
+    });
+    await _reloadSelectedLists();
+  }
+
+  Future<void> _reloadSelectedLists() async {
+    final loadVersion = ++selectedListLoadVersion;
+    final ids = selectedListIds.toList(growable: false);
+
+    setState(() {
       selectedListLoadError = null;
-      isLoadingSelectedList = listId != null;
+      isLoadingSelectedLists = ids.isNotEmpty;
+      if (ids.isEmpty) {
+        importedListItems = [];
+      }
     });
 
-    if (listId == null) {
+    if (ids.isEmpty) {
       return;
     }
 
     try {
-      final items = await _loadListItems(listId);
-
-      if (!mounted ||
-          loadVersion != selectedListLoadVersion ||
-          selectedListId != listId) {
+      final listResults = await Future.wait(ids.map(_loadListItems));
+      if (!mounted || loadVersion != selectedListLoadVersion) {
         return;
       }
 
-      final uniqueItems = <String, Item>{
-        for (final item in items) item.id: item,
-      }.values.toList();
+      final mergedItems = dedupeActivityItems(listResults);
 
       setState(() {
-        selectedActivityItems = uniqueItems;
-        isLoadingSelectedList = false;
+        importedListItems = mergedItems;
+        isLoadingSelectedLists = false;
       });
     } catch (_) {
-      if (!mounted ||
-          loadVersion != selectedListLoadVersion ||
-          selectedListId != listId) {
+      if (!mounted || loadVersion != selectedListLoadVersion) {
         return;
       }
 
       setState(() {
-        selectedActivityItems = [];
-        selectedListLoadError = 'Failed to load Items from this Packing List.';
-        isLoadingSelectedList = false;
+        importedListItems = [];
+        selectedListLoadError = 'Failed to load Items from the selected Lists.';
+        isLoadingSelectedLists = false;
       });
     }
   }
 
   Future<void> _addItemsToSelection() async {
-    if (selectedListId == null || isLoadingSelectedList || isSaving) {
+    if (isLoadingSelectedLists || isSaving) {
       return;
     }
 
@@ -549,15 +875,11 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
     }
 
     setState(() {
-      final merged = <String, Item>{
-        for (final item in selectedActivityItems) item.id: item,
-      };
-
       for (final item in items) {
-        merged.putIfAbsent(item.id, () => item);
+        manuallyAddedItems[item.id] = item;
+        removedItemIds.remove(item.id);
+        quantityOverrides.putIfAbsent(item.id, () => item.quantity);
       }
-
-      selectedActivityItems = merged.values.toList();
     });
   }
 
@@ -567,21 +889,43 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
     }
 
     setState(() {
-      selectedActivityItems = selectedActivityItems
-          .where((item) => item.id != itemId)
-          .toList();
+      removedItemIds.add(itemId);
+      manuallyAddedItems.remove(itemId);
+      quantityOverrides.remove(itemId);
+    });
+  }
+
+  void _changeItemQuantity(String itemId, int delta) {
+    if (isSaving) {
+      return;
+    }
+
+    Item? target;
+    for (final item in selectedActivityItems) {
+      if (item.id == itemId) {
+        target = item;
+        break;
+      }
+    }
+    if (target == null) {
+      return;
+    }
+
+    final nextQuantity = target.quantity + delta;
+    if (nextQuantity < 1 || nextQuantity > 999) {
+      return;
+    }
+
+    setState(() {
+      quantityOverrides[itemId] = nextQuantity;
     });
   }
 
   Future<List<Item>> _loadListItems(String listId) async {
     final itemIds = await listRepository!.getListItemIds(listId);
-
     final itemResults = await Future.wait(
-      itemIds.map((itemId) {
-        return itemRepository!.getItem(itemId);
-      }),
+      itemIds.map((itemId) => itemRepository!.getItem(itemId)),
     );
-
     return itemResults.whereType<Item>().toList();
   }
 
@@ -626,6 +970,12 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
   }
 
   Future<void> _saveActivity() async {
+    if (isSaving) return;
+    if (_partialActivityId != null) {
+      await _retryMissingCreationItems();
+      return;
+    }
+
     final activityName = nameController.text.trim();
 
     if (activityName.isEmpty) {
@@ -638,18 +988,13 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
       return;
     }
 
-    if (selectedListId == null) {
-      _showMessage('Please choose a packing list.');
-      return;
-    }
-
-    if (isLoadingSelectedList) {
-      _showMessage('Please wait for the Packing List to finish loading.');
+    if (isLoadingSelectedLists) {
+      _showMessage('Please wait for the selected Lists to finish loading.');
       return;
     }
 
     if (selectedListLoadError != null) {
-      _showMessage('Please retry loading the Packing List Items.');
+      _showMessage('Please retry loading the selected List Items.');
       return;
     }
 
@@ -663,7 +1008,9 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
       return;
     }
 
-    final listId = selectedListId!;
+    // Keep the legacy source-list field for backward compatibility. The
+    // Activity Item manifest below is the authoritative independent snapshot.
+    final listId = selectedListIds.isEmpty ? '' : selectedListIds.first;
     final activityItems = List<Item>.from(selectedActivityItems);
 
     final startAt = DateTime(
@@ -725,9 +1072,12 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
       Navigator.pop(context);
     } on PartialActivityCreationException catch (error) {
       if (!mounted) return;
-      final messenger = ScaffoldMessenger.of(context);
-      Navigator.pop(context);
-      messenger.showSnackBar(SnackBar(content: Text(error.toString())));
+      setState(() {
+        _partialActivityId = error.activityId;
+        _missingCreationItems = error.missingItems;
+        _partialCreationError =
+            'Some Items could not be added. Check your connection and retry.';
+      });
     } catch (error) {
       if (!mounted) {
         return;
@@ -741,6 +1091,164 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
         });
       }
     }
+  }
+
+  Widget _buildPartialCreationRecovery() {
+    final missing = _missingCreationItems;
+    return SafeArea(
+      top: false,
+      child: Column(
+        children: [
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(20, 24, 20, 12),
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    color: AppColors.card,
+                    border: Border.all(color: AppColors.ink, width: 2),
+                    borderRadius: BorderRadius.circular(5),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Activity created',
+                        style: AppTextStyles.heading.copyWith(fontSize: 21),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        '${missing.length} ${missing.length == 1 ? 'Item still needs' : 'Items still need'} to be added. Retry here to finish the same Activity without creating a duplicate.',
+                        style: AppTextStyles.body,
+                      ),
+                      if (_partialCreationError != null) ...[
+                        const SizedBox(height: 10),
+                        Text(_partialCreationError!, style: AppTextStyles.body),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Text('Missing Items', style: AppTextStyles.bodyBold),
+                const SizedBox(height: 8),
+                for (final item in missing)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      '• ${item.name} (Qty ${item.quantity})',
+                      style: AppTextStyles.body,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+            child: Column(
+              children: [
+                SizedBox(
+                  width: double.infinity,
+                  height: 52,
+                  child: ElevatedButton(
+                    onPressed: isSaving ? null : _retryMissingCreationItems,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.ink,
+                      foregroundColor: AppColors.background,
+                    ),
+                    child: Text(
+                      isSaving ? 'Adding Items...' : 'Retry Missing Items',
+                      style: AppTextStyles.bodyBold.copyWith(
+                        color: AppColors.background,
+                      ),
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: _confirmPartialExit,
+                  child: const Text('Back to Activities'),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _retryMissingCreationItems() async {
+    if (isSaving) return;
+    final activityId = _partialActivityId;
+    if (activityId == null) return;
+    final missing = List<Item>.from(_missingCreationItems);
+    setState(() {
+      isSaving = true;
+      _partialCreationError = null;
+    });
+    try {
+      await activityRepository!.retryActivityCreationItems(
+        activityId: activityId,
+        items: missing,
+      );
+      if (!mounted) return;
+      _showMessage('All Activity Items added.');
+      _leaveCreatedActivity();
+    } on PartialActivityCreationException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _missingCreationItems = error.missingItems;
+        _partialCreationError = 'Retry stopped: ${error.cause}';
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _partialCreationError = 'Could not add Items: $error');
+    } finally {
+      if (mounted) setState(() => isSaving = false);
+    }
+  }
+
+  Future<void> _confirmPartialExit() async {
+    if (_showingPartialExitWarning || _didPop || !mounted) return;
+    _showingPartialExitWarning = true;
+    try {
+      final leave = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => AlertDialog(
+          backgroundColor: AppColors.background,
+          title: const Text('Leave unfinished Activity?'),
+          content: Text(
+            'Up to ${_missingCreationItems.length} Items may still be missing. '
+            'This retry list will be lost if you leave now.',
+            style: AppTextStyles.body,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Keep retrying'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Leave Activity'),
+            ),
+          ],
+        ),
+      );
+      if (leave == true && mounted) _leaveCreatedActivity();
+    } finally {
+      _showingPartialExitWarning = false;
+    }
+  }
+
+  void _leaveCreatedActivity() {
+    if (_didPop || !mounted) return;
+    setState(() => _allowPartialExit = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_didPop) {
+        _didPop = true;
+        Navigator.of(context).pop();
+      }
+    });
   }
 
   void _showMessage(String message) {
@@ -769,9 +1277,17 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
 
 class _PreviewItem extends StatelessWidget {
   final Item item;
+  final VoidCallback? onDecrease;
+  final VoidCallback? onIncrease;
   final VoidCallback? onRemove;
 
-  const _PreviewItem({required this.item, this.onRemove});
+  const _PreviewItem({
+    super.key,
+    required this.item,
+    this.onDecrease,
+    this.onIncrease,
+    this.onRemove,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -794,14 +1310,12 @@ class _PreviewItem extends StatelessWidget {
             ),
             alignment: Alignment.center,
             child: Icon(
-              _getItemIcon(item.icon),
+              itemIconDataForKey(item.icon),
               color: AppColors.ink,
               size: 20,
             ),
           ),
-
           const SizedBox(width: 10),
-
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -812,21 +1326,36 @@ class _PreviewItem extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: AppTextStyles.bodyBold,
                 ),
-
                 const SizedBox(height: 2),
-
                 Text(
-                  '${item.category} • Qty ${item.quantity}',
+                  item.category,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: AppTextStyles.body,
                 ),
               ],
             ),
           ),
-
+          const SizedBox(width: 6),
+          _QuantityButton(
+            icon: Icons.remove,
+            tooltip: 'Decrease quantity',
+            onPressed: onDecrease,
+          ),
+          Container(
+            constraints: const BoxConstraints(minWidth: 28),
+            alignment: Alignment.center,
+            child: Text('${item.quantity}', style: AppTextStyles.bodyBold),
+          ),
+          _QuantityButton(
+            icon: Icons.add,
+            tooltip: 'Increase quantity',
+            onPressed: onIncrease,
+          ),
           if (item.hasQr)
             Container(
-              margin: EdgeInsets.only(right: onRemove == null ? 0 : 4),
-              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+              margin: const EdgeInsets.only(left: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
               decoration: BoxDecoration(
                 color: AppColors.green,
                 border: Border.all(color: AppColors.ink, width: 1.2),
@@ -840,18 +1369,148 @@ class _PreviewItem extends StatelessWidget {
                 ),
               ),
             ),
-
           if (onRemove != null)
             Tooltip(
               message: 'Remove from Activity',
-              child: GestureDetector(
-                onTap: onRemove,
-                child: const SizedBox(
-                  width: 34,
-                  height: 34,
-                  child: Icon(Icons.close, color: AppColors.ink, size: 20),
+              child: IconButton(
+                onPressed: onRemove,
+                constraints: const BoxConstraints(minWidth: 38, minHeight: 38),
+                padding: EdgeInsets.zero,
+                icon: const Icon(Icons.close, color: AppColors.ink, size: 20),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QuantityButton extends StatelessWidget {
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onPressed;
+
+  const _QuantityButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: tooltip,
+      onPressed: onPressed,
+      constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+      padding: EdgeInsets.zero,
+      icon: Icon(
+        icon,
+        size: 18,
+        color: onPressed == null ? AppColors.muted : AppColors.ink,
+      ),
+    );
+  }
+}
+
+class _ListSelectorCard extends StatelessWidget {
+  final List<ItemList> lists;
+  final Set<String> selectedIds;
+  final bool disabled;
+  final VoidCallback onChoose;
+  final ValueChanged<String> onRemove;
+
+  const _ListSelectorCard({
+    required this.lists,
+    required this.selectedIds,
+    required this.disabled,
+    required this.onChoose,
+    required this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedLists = lists
+        .where((list) => selectedIds.contains(list.id))
+        .toList();
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.background,
+        border: Border.all(color: AppColors.ink, width: 2),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  selectedLists.isEmpty
+                      ? 'No Lists selected'
+                      : '${selectedLists.length} ${selectedLists.length == 1 ? 'List' : 'Lists'} selected',
+                  style: AppTextStyles.bodyBold,
                 ),
               ),
+              TextButton.icon(
+                onPressed: disabled ? null : onChoose,
+                icon: const Icon(Icons.playlist_add, size: 19),
+                label: Text(selectedLists.isEmpty ? 'Choose' : 'Change'),
+              ),
+            ],
+          ),
+          if (selectedLists.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 7,
+              runSpacing: 7,
+              children: selectedLists.map((list) {
+                return Container(
+                  constraints: const BoxConstraints(maxWidth: 190),
+                  padding: const EdgeInsets.fromLTRB(8, 5, 4, 5),
+                  decoration: BoxDecoration(
+                    color: AppColors.card,
+                    border: Border.all(color: AppColors.ink, width: 1.5),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        listIconDataForKey(list.icon),
+                        size: 16,
+                        color: AppColors.ink,
+                      ),
+                      const SizedBox(width: 5),
+                      Flexible(
+                        child: Text(
+                          list.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTextStyles.bodyBold.copyWith(fontSize: 11),
+                        ),
+                      ),
+                      const SizedBox(width: 2),
+                      InkWell(
+                        onTap: disabled ? null : () => onRemove(list.id),
+                        borderRadius: BorderRadius.circular(12),
+                        child: const Padding(
+                          padding: EdgeInsets.all(2),
+                          child: Icon(Icons.close, size: 15),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+          ] else
+            Text(
+              lists.isEmpty
+                  ? 'No saved Lists yet. You can still add Items below.'
+                  : 'You can skip Lists and add individual Items below.',
+              style: AppTextStyles.body.copyWith(color: AppColors.muted),
             ),
         ],
       ),
@@ -904,67 +1563,6 @@ class _PickerBox extends StatelessWidget {
         ),
       ),
     );
-  }
-}
-
-class _NoListsMessage extends StatelessWidget {
-  const _NoListsMessage();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        border: Border.all(color: AppColors.ink, width: 1.5),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        'You need to create a List before creating an Activity.',
-        style: AppTextStyles.body,
-      ),
-    );
-  }
-}
-
-IconData _getItemIcon(String icon) {
-  switch (icon) {
-    case 'electronics':
-      return Icons.devices_outlined;
-
-    case 'documents':
-      return Icons.description_outlined;
-
-    case 'clothing':
-      return Icons.checkroom_outlined;
-
-    case 'toiletries':
-      return Icons.cleaning_services_outlined;
-
-    case 'laptop':
-      return Icons.laptop_mac;
-
-    case 'charger':
-      return Icons.battery_charging_full;
-
-    case 'battery':
-      return Icons.battery_5_bar;
-
-    case 'passport':
-      return Icons.badge_outlined;
-
-    case 'id':
-      return Icons.credit_card;
-
-    case 'jacket':
-    case 'shirt':
-      return Icons.checkroom;
-
-    case 'toothbrush':
-      return Icons.cleaning_services_outlined;
-
-    default:
-      return Icons.inventory_2_outlined;
   }
 }
 

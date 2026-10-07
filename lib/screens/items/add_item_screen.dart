@@ -11,6 +11,7 @@ import '../../services/auth_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/lakwatsa_ui.dart';
 import '../lists/list_details_screen.dart';
+import '../lists/list_icon_catalog.dart';
 import 'item_icon_catalog.dart';
 import 'item_qr_screen.dart';
 import 'manage_categories_screen.dart';
@@ -505,6 +506,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
                               return ListDetailsScreen(
                                 listId: list.id,
                                 listName: list.name,
+                                listIcon: list.icon,
                               );
                             },
                           ),
@@ -520,8 +522,8 @@ class _AddItemScreenState extends State<AddItemScreen> {
                         ),
                         child: Row(
                           children: [
-                            const Icon(
-                              Icons.list_alt_outlined,
+                            Icon(
+                              listIconDataForKey(list.icon),
                               color: AppColors.ink,
                               size: 20,
                             ),

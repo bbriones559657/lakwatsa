@@ -8,6 +8,7 @@ import '../../services/auth_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/lakwatsa_ui.dart';
 import '../items/add_item_screen.dart';
+import '../items/item_icon_catalog.dart';
 
 class AddItemsScreen extends StatefulWidget {
   final Set<String> existingItemIds;
@@ -477,7 +478,7 @@ class _SelectableItemCard extends StatelessWidget {
                 ),
                 alignment: Alignment.center,
                 child: Icon(
-                  _getItemIcon(item.icon),
+                  itemIconDataForKey(item.icon),
                   color: AppColors.ink,
                   size: 24,
                 ),
@@ -555,46 +556,7 @@ class _SelectableItemCard extends StatelessWidget {
     );
   }
 
-  IconData _getItemIcon(String icon) {
-    switch (icon) {
-      case 'electronics':
-        return Icons.devices_outlined;
 
-      case 'documents':
-        return Icons.description_outlined;
-
-      case 'clothing':
-        return Icons.checkroom_outlined;
-
-      case 'toiletries':
-        return Icons.cleaning_services_outlined;
-
-      case 'laptop':
-        return Icons.laptop_mac;
-
-      case 'charger':
-        return Icons.battery_charging_full;
-
-      case 'battery':
-        return Icons.battery_5_bar;
-
-      case 'passport':
-        return Icons.badge_outlined;
-
-      case 'id':
-        return Icons.credit_card;
-
-      case 'jacket':
-      case 'shirt':
-        return Icons.checkroom;
-
-      case 'toothbrush':
-        return Icons.cleaning_services_outlined;
-
-      default:
-        return Icons.inventory_2_outlined;
-    }
-  }
 }
 
 class _AddButton extends StatelessWidget {

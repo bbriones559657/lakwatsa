@@ -320,14 +320,14 @@ class _CategoryChip extends StatelessWidget {
       button: true,
       selected: selected,
       label: 'Filter by $text',
-      child: SizedBox(
-        height: AppMetrics.touchTarget,
-        child: Center(
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: onTap,
-              borderRadius: BorderRadius.circular(14),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: SizedBox(
+            height: AppMetrics.touchTarget,
+            child: Center(
               child: Container(
                 height: 28,
                 padding: const EdgeInsets.symmetric(horizontal: 14),
@@ -354,7 +354,6 @@ class _CategoryChip extends StatelessWidget {
     );
   }
 }
-
 class _ItemSection extends StatelessWidget {
   final String title;
   final List<Item> items;

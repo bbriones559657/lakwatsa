@@ -461,6 +461,87 @@ test('Activity metadata edits are status-aware', async () => {
   }));
 });
 
+test('Upcoming Activity cancellation clears its draft and becomes read-only', async () => {
+  const alice = client();
+  await seedActivity('UPCOMING');
+  await assertSucceeds(setDoc(
+    checkRef(alice, 'draft_before_activity'),
+    draft('BEFORE_ACTIVITY'),
+  ));
+
+  await assertFails(updateDoc(activityRef(alice), {
+    status: 'CANCELLED',
+    updatedAt: later,
+  }));
+
+  const cancel = writeBatch(alice);
+  cancel.update(activityRef(alice), {
+    status: 'CANCELLED',
+    updatedAt: later,
+  });
+  cancel.delete(checkRef(alice, 'draft_before_activity'));
+  await assertSucceeds(cancel.commit());
+
+  assert.equal((await getDoc(activityRef(alice))).data().status, 'CANCELLED');
+  assert.equal(
+    (await getDoc(checkRef(alice, 'draft_before_activity'))).exists(),
+    false,
+  );
+
+  await assertFails(updateDoc(activityRef(alice), {
+    name: 'Changed after cancel',
+    updatedAt: later,
+  }));
+  await assertFails(setDoc(
+    checkRef(alice, 'draft_before_activity'),
+    draft('BEFORE_ACTIVITY'),
+  ));
+  await assertFails(trackedAddBatch(
+    alice,
+    'phone',
+    { fromItemIds: ['bottle'], fromRevision: 0 },
+  ).commit());
+});
+
+test('Activity without a draft can be cancelled in either open status', async () => {
+  const alice = client();
+  for (const status of ['UPCOMING', 'ACTIVE']) {
+    await environment.clearFirestore();
+    await seedActivity(status);
+    await assertSucceeds(updateDoc(activityRef(alice), {
+      status: 'CANCELLED',
+      updatedAt: later,
+    }));
+    assert.equal((await getDoc(activityRef(alice))).data().status, 'CANCELLED');
+  }
+});
+
+test('Active Activity cancellation clears Return draft and cannot be repeated', async () => {
+  const alice = client();
+  await seedActivity('ACTIVE');
+  await assertSucceeds(setDoc(
+    checkRef(alice, 'draft_return'),
+    draft('RETURN'),
+  ));
+
+  const cancel = writeBatch(alice);
+  cancel.update(activityRef(alice), {
+    status: 'CANCELLED',
+    updatedAt: later,
+  });
+  cancel.delete(checkRef(alice, 'draft_return'));
+  await assertSucceeds(cancel.commit());
+
+  assert.equal((await getDoc(activityRef(alice))).data().status, 'CANCELLED');
+  assert.equal((await getDoc(checkRef(alice, 'draft_return'))).exists(), false);
+
+  await assertFails(updateDoc(activityRef(alice), {
+    status: 'CANCELLED',
+    updatedAt: later,
+  }));
+  await assertFails(transitionBatch(alice, 'RETURN').commit());
+});
+
 test('Activity Item management follows Activity status and timing', async () => {
   const alice = client();
 

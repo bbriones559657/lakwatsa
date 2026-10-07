@@ -1,5 +1,6 @@
-/// The only supported Activity status progression is
-/// UPCOMING -> ACTIVE -> COMPLETED.
+/// Supported Activity lifecycle:
+/// UPCOMING -> ACTIVE -> COMPLETED
+/// UPCOMING/ACTIVE -> CANCELLED.
 ///
 /// These checks are also enforced inside Firestore transactions so two
 /// competing check completions cannot both change the Activity.
@@ -71,6 +72,14 @@ class ActivityStatusPolicy {
       throw StateError(
         'Cannot edit Activity details while the Activity is '
         '${current ?? 'UNKNOWN'}.',
+      );
+    }
+  }
+
+  static void requireCancellation(String? current) {
+    if (current != 'UPCOMING' && current != 'ACTIVE') {
+      throw StateError(
+        'Cannot cancel Activity while it is ${current ?? 'UNKNOWN'}.',
       );
     }
   }

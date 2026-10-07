@@ -68,7 +68,7 @@ service cloud.firestore {
         && d.reminderEnabled is bool
         && d.reminderMinutes is int
         && d.reminderMinutes >= 0 && d.reminderMinutes <= 1440
-        && d.status in ['UPCOMING', 'ACTIVE', 'COMPLETED']
+        && d.status in ['UPCOMING', 'ACTIVE', 'COMPLETED', 'CANCELLED']
         && d.createdAt is timestamp && d.updatedAt is timestamp;
     }
     function metadataOnly(changed) {
@@ -166,6 +166,14 @@ service cloud.firestore {
         && completedCheckMatches(uid, activityId, checkId);
     }
 
+    function cancellationDraftCleared(uid, activityId) {
+      let draftId = resource.data.status == 'ACTIVE'
+        ? 'draft_return'
+        : 'draft_before_activity';
+      let draftPath = checkPath(uid, activityId, draftId);
+      return !exists(draftPath) || !existsAfter(draftPath);
+    }
+
     function activityUpdateAllowed(uid, activityId) {
       // Route by status before evaluating unrelated update policies. A check
       // transition must not traverse metadata and Item mutation validators
@@ -179,7 +187,12 @@ service cloud.firestore {
             && completesCheck(uid, activityId, 'before_activity', changed))
           || (resource.data.status == 'ACTIVE'
             && request.resource.data.status == 'COMPLETED'
-            && completesCheck(uid, activityId, 'return', changed)));
+            && completesCheck(uid, activityId, 'return', changed))
+          || (resource.data.status in ['UPCOMING', 'ACTIVE']
+            && request.resource.data.status == 'CANCELLED'
+            && changed.hasOnly(['status', 'updatedAt'])
+            && request.resource.data.updatedAt is timestamp
+            && cancellationDraftCleared(uid, activityId)));
     }
     function validActivityItem(d, itemId) {
       return d.keys().hasAll([
@@ -276,6 +289,16 @@ service cloud.firestore {
           && transitionsWithCheck(uid, activityId, 'before_activity'))
         || (checkId == 'draft_return'
           && transitionsWithCheck(uid, activityId, 'return'));
+    }
+
+    function draftClearedByCancellation(uid, activityId, checkId) {
+      let beforeParent = get(activityPath(uid, activityId)).data;
+      let afterParent = getAfter(activityPath(uid, activityId)).data;
+      return afterParent.status == 'CANCELLED'
+        && ((checkId == 'draft_before_activity'
+            && beforeParent.status == 'UPCOMING')
+          || (checkId == 'draft_return'
+            && beforeParent.status == 'ACTIVE'));
     }
     function validCheckResultManifest(uid, activityId, d) {
       let parent = get(activityPath(uid, activityId)).data;
@@ -436,7 +459,9 @@ service cloud.firestore {
             && validDraft(request.resource.data, checkId)
             && draftStatusMatches(uid, activityId, checkId, request.resource.data);
           // A draft can be removed only as part of a status transition.
-          allow delete: if owner(uid) && draftClearedByCompletion(uid, activityId, checkId);
+          allow delete: if owner(uid)
+            && (draftClearedByCompletion(uid, activityId, checkId)
+              || draftClearedByCancellation(uid, activityId, checkId));
           match /items/{itemId} {
             // Legacy result rows remain readable. New completed checks store the
             // complete, rules-verifiable result manifest on the check document.

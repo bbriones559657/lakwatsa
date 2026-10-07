@@ -316,7 +316,7 @@ class _ActiveActivityCardState extends State<_ActiveActivityCard> {
       child: LakwatsaPixelCard(
         color: AppColors.card,
         shadowOffset: const Offset(5, 5),
-        height: 180,
+        minHeight: 180,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
           child: StreamBuilder<List<ActivityItem>>(
@@ -337,6 +337,7 @@ class _ActiveActivityCardState extends State<_ActiveActivityCard> {
                   final hasStarted = draft != null;
 
                   return Column(
+                    mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Container(
@@ -646,15 +647,19 @@ class _DashboardActionButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final compact = height < AppMetrics.touchTarget;
+    final borderWidth = compact ? 2.0 : AppMetrics.strongBorderWidth;
+    final visualHeight = compact
+        ? AppMetrics.touchTarget + (borderWidth * 2)
+        : height;
     final foreground = filled ? AppColors.background : AppColors.ink;
     final visualButton = Container(
       width: width,
-      height: height,
+      height: visualHeight,
       decoration: BoxDecoration(
         color: filled ? AppColors.ink : AppColors.background,
         border: Border.all(
           color: AppColors.ink,
-          width: compact ? 2 : AppMetrics.strongBorderWidth,
+          width: borderWidth,
         ),
         borderRadius: BorderRadius.circular(AppMetrics.radius),
         boxShadow: [

@@ -7,6 +7,7 @@ import 'package:lakwatsa/models/item_list.dart';
 import 'package:lakwatsa/repositories/activity_repository.dart';
 import 'package:lakwatsa/repositories/list_repository.dart';
 import 'package:lakwatsa/screens/home/home_screen.dart';
+import 'package:lakwatsa/theme/app_theme.dart';
 
 class _FakeActivityRepository extends Fake implements ActivityRepository {
   final List<Activity> activities;
@@ -152,6 +153,80 @@ void main() {
     await tester.ensureVisible(seeAllButton);
     await tester.tap(seeAllButton);
     expect(listsCount, 2);
+  });
+
+  testWidgets('dashboard stays usable on a narrow screen with larger text', (
+    tester,
+  ) async {
+    final activity = _activeActivity();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: MediaQueryData(
+            size: const Size(320, 640),
+            textScaler: TextScaler.linear(1.5),
+          ),
+          child: Scaffold(
+            body: SizedBox(
+              width: 320,
+              height: 640,
+              child: HomeScreen(
+                activityRepository: _FakeActivityRepository(
+                  activities: [activity],
+                  itemsByActivity: {
+                    activity.id: const [
+                      ActivityItem(
+                        id: 'item-1',
+                        itemId: 'item-1',
+                        itemName: 'Passport',
+                        category: 'Documents',
+                        quantity: 1,
+                        icon: 'documents',
+                        addedDuringActivity: false,
+                      ),
+                      ActivityItem(
+                        id: 'item-2',
+                        itemId: 'item-2',
+                        itemName: 'Camera',
+                        category: 'Electronics',
+                        quantity: 1,
+                        icon: 'electronics',
+                        addedDuringActivity: false,
+                      ),
+                    ],
+                  },
+                ),
+                listRepository: _FakeListRepository(lists: const []),
+                profileInitial: 'T',
+                onOpenItems: () {},
+                onCreateList: () {},
+                onOpenLists: () {},
+                onOpenActivities: () {},
+                onContinueActivity: (_) {},
+                onOpenList: (_) {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+
+    final actionText = find.text('Start Return Check →');
+    await tester.ensureVisible(actionText);
+    final actionInkWell = find.ancestor(
+      of: actionText,
+      matching: find.byType(InkWell),
+    );
+    expect(actionInkWell, findsOneWidget);
+    expect(
+      tester.getSize(actionInkWell).height,
+      greaterThanOrEqualTo(AppMetrics.touchTarget),
+    );
   });
 
   testWidgets(

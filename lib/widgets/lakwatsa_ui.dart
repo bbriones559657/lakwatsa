@@ -48,8 +48,11 @@ class LakwatsaTopBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: AppMetrics.topBarHeight,
-      padding: const EdgeInsets.symmetric(horizontal: AppMetrics.pagePadding),
+      constraints: const BoxConstraints(minHeight: AppMetrics.topBarHeight),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppMetrics.pagePadding,
+        vertical: 6,
+      ),
       decoration: const BoxDecoration(
         color: AppColors.background,
         border: Border(
@@ -239,6 +242,7 @@ class LakwatsaPixelCard extends StatelessWidget {
   final Offset shadowOffset;
   final EdgeInsetsGeometry? padding;
   final double? height;
+  final double? minHeight;
 
   const LakwatsaPixelCard({
     super.key,
@@ -248,7 +252,11 @@ class LakwatsaPixelCard extends StatelessWidget {
     this.shadowOffset = const Offset(4, 4),
     this.padding,
     this.height,
-  });
+    this.minHeight,
+  }) : assert(
+         height == null || minHeight == null || height >= minHeight,
+         'height must be at least minHeight when both are provided.',
+       );
 
   @override
   Widget build(BuildContext context) {
@@ -257,6 +265,9 @@ class LakwatsaPixelCard extends StatelessWidget {
       children: [
         Container(
           height: height,
+          constraints: minHeight == null
+              ? null
+              : BoxConstraints(minHeight: minHeight!),
           padding: padding,
           decoration: BoxDecoration(
             color: color,

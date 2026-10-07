@@ -81,6 +81,7 @@ class _MainScreenState extends State<MainScreen> {
         builder: (context) => ListDetailsScreen(
           listId: list.id,
           listName: list.name,
+          listIcon: list.icon,
         ),
       ),
     );

@@ -5,16 +5,21 @@ import '../../repositories/firestore_item_repository.dart';
 import '../../repositories/firestore_list_repository.dart';
 import '../../services/auth_service.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/lakwatsa_ui.dart';
+import '../items/item_icon_catalog.dart';
 import 'add_items_screen.dart';
+import 'list_icon_catalog.dart';
 
 class ListDetailsScreen extends StatefulWidget {
   final String listId;
   final String listName;
+  final String listIcon;
 
   const ListDetailsScreen({
     super.key,
     required this.listId,
     required this.listName,
+    required this.listIcon,
   });
 
   @override
@@ -51,19 +56,24 @@ class _ListDetailsScreenState
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
-        child: Column(
+        child: Stack(
           children: [
-            _Header(
-              listName: widget.listName,
-              editMode: editMode,
-              onEdit: () {
-                setState(() {
-                  editMode = !editMode;
-                });
-              },
-            ),
-            Expanded(
-              child: _buildContent(),
+            const LakwatsaBackgroundDots(),
+            Column(
+              children: [
+                _Header(
+                  listName: widget.listName,
+                  editMode: editMode,
+                  onEdit: () {
+                    setState(() {
+                      editMode = !editMode;
+                    });
+                  },
+                ),
+                Expanded(
+                  child: _buildContent(),
+                ),
+              ],
             ),
           ],
         ),
@@ -146,6 +156,7 @@ class _ListDetailsScreenState
               children: [
                 _ListInfo(
                   listName: widget.listName,
+                  listIcon: widget.listIcon,
                   itemCount: items.length,
                 ),
 
@@ -385,86 +396,54 @@ class _Header extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 70,
-      padding:
-          const EdgeInsets.symmetric(
-        horizontal: 16,
-      ),
+      height: AppMetrics.topBarHeight,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
       decoration: const BoxDecoration(
+        color: AppColors.background,
         border: Border(
           bottom: BorderSide(
             color: AppColors.ink,
-            width: 2,
+            width: AppMetrics.borderWidth,
           ),
         ),
       ),
       child: Row(
         children: [
-          GestureDetector(
-            onTap: () {
-              Navigator.pop(context);
-            },
-            child: const SizedBox(
-              width: 42,
-              height: 42,
-              child: Icon(
-                Icons.arrow_back,
-                color: AppColors.ink,
-                size: 24,
+          Semantics(
+            button: true,
+            label: 'Back to Lists',
+            child: SizedBox(
+              width: AppMetrics.touchTarget,
+              height: AppMetrics.touchTarget,
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () => Navigator.pop(context),
+                  borderRadius: BorderRadius.circular(AppMetrics.radius),
+                  child: const Icon(
+                    Icons.arrow_back,
+                    color: AppColors.ink,
+                    size: 22,
+                  ),
+                ),
               ),
             ),
           ),
-
           const SizedBox(width: 4),
-
           Expanded(
             child: Text(
               listName,
               maxLines: 1,
-              overflow:
-                  TextOverflow.ellipsis,
-              style:
-                  AppTextStyles.heading.copyWith(
-                fontSize: 21,
-              ),
+              overflow: TextOverflow.ellipsis,
+              style: AppTextStyles.heading,
             ),
           ),
-
           const SizedBox(width: 8),
-
-          GestureDetector(
-            onTap: onEdit,
-            child: Container(
-              height: 42,
-              padding:
-                  const EdgeInsets.symmetric(
-                horizontal: 14,
-              ),
-              decoration: BoxDecoration(
-                color: editMode
-                    ? AppColors.ink
-                    : AppColors.background,
-                border: Border.all(
-                  color: AppColors.ink,
-                  width: 2,
-                ),
-                borderRadius:
-                    BorderRadius.circular(4),
-              ),
-              alignment: Alignment.center,
-              child: Text(
-                editMode
-                    ? 'Save'
-                    : 'Edit',
-                style: AppTextStyles
-                    .bodyBold
-                    .copyWith(
-                  color: editMode
-                      ? AppColors.background
-                      : AppColors.ink,
-                ),
-              ),
-            ),
+          LakwatsaHeaderAction(
+            text: editMode ? 'Done' : 'Manage',
+            label: editMode ? 'Finish managing list items' : 'Manage list items',
+            bordered: false,
+            onPressed: onEdit,
           ),
         ],
       ),
@@ -474,10 +453,12 @@ class _Header extends StatelessWidget {
 
 class _ListInfo extends StatelessWidget {
   final String listName;
+  final String listIcon;
   final int itemCount;
 
   const _ListInfo({
     required this.listName,
+    required this.listIcon,
     required this.itemCount,
   });
 
@@ -498,8 +479,8 @@ class _ListInfo extends StatelessWidget {
                 BorderRadius.circular(4),
           ),
           alignment: Alignment.center,
-          child: const Icon(
-            Icons.list_alt_outlined,
+          child: Icon(
+            listIconDataForKey(listIcon),
             color: AppColors.ink,
             size: 34,
           ),
@@ -686,7 +667,7 @@ class _ItemCard extends StatelessWidget {
             ),
             alignment: Alignment.center,
             child: Icon(
-              _getItemIcon(item.icon),
+              itemIconDataForKey(item.icon),
               color: AppColors.ink,
               size: 24,
             ),
@@ -774,48 +755,7 @@ class _ItemCard extends StatelessWidget {
     );
   }
 
-  IconData _getItemIcon(
-    String icon,
-  ) {
-    switch (icon) {
-      case 'electronics':
-        return Icons.devices_outlined;
 
-      case 'documents':
-        return Icons.description_outlined;
-
-      case 'clothing':
-        return Icons.checkroom_outlined;
-
-      case 'toiletries':
-        return Icons.cleaning_services_outlined;
-
-      case 'laptop':
-        return Icons.laptop_mac;
-
-      case 'charger':
-        return Icons.battery_charging_full;
-
-      case 'battery':
-        return Icons.battery_5_bar;
-
-      case 'passport':
-        return Icons.badge_outlined;
-
-      case 'id':
-        return Icons.credit_card;
-
-      case 'jacket':
-      case 'shirt':
-        return Icons.checkroom;
-
-      case 'toothbrush':
-        return Icons.cleaning_services_outlined;
-
-      default:
-        return Icons.inventory_2_outlined;
-    }
-  }
 }
 
 class _AddItemsButton extends StatelessWidget {
@@ -827,18 +767,18 @@ class _AddItemsButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onPressed,
+    return Semantics(
+      button: true,
+      label: 'Add items to this list',
       child: Container(
-        height: 50,
+        height: AppMetrics.primaryButtonHeight,
         decoration: BoxDecoration(
           color: AppColors.ink,
           border: Border.all(
             color: AppColors.ink,
-            width: 2,
+            width: AppMetrics.borderWidth,
           ),
-          borderRadius:
-              BorderRadius.circular(4),
+          borderRadius: BorderRadius.circular(AppMetrics.radius),
           boxShadow: const [
             BoxShadow(
               color: AppColors.green,
@@ -846,12 +786,19 @@ class _AddItemsButton extends StatelessWidget {
             ),
           ],
         ),
-        alignment: Alignment.center,
-        child: Text(
-          '+ Add Items',
-          style:
-              AppTextStyles.bodyBold.copyWith(
-            color: AppColors.background,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onPressed,
+            borderRadius: BorderRadius.circular(AppMetrics.radius),
+            child: Center(
+              child: Text(
+                '+ Add Items',
+                style: AppTextStyles.bodyBold.copyWith(
+                  color: AppColors.background,
+                ),
+              ),
+            ),
           ),
         ),
       ),
