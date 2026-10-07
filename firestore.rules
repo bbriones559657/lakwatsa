@@ -321,9 +321,30 @@ service cloud.firestore {
         && validCheckResultManifest(uid, activityId, d);
     }
 
+    function validCategoryIcon(icon) {
+      return icon is string && icon in [
+        'inventory', 'star', 'favorite', 'gift', 'bookmark',
+        'electronics', 'laptop', 'phone', 'camera', 'camera_alt',
+        'camera_front', 'camera_rear', 'video_camera', 'headphones',
+        'charger', 'battery', 'cable', 'keyboard', 'mouse', 'watch',
+        'passport', 'id', 'wallet', 'keys', 'luggage', 'backpack',
+        'umbrella', 'map', 'beach', 'clothing', 'toiletries', 'medicine',
+        'first_aid', 'health', 'documents', 'book', 'school', 'work',
+        'notes', 'food', 'drink', 'kitchen', 'home', 'water', 'fitness',
+        'sports', 'pets', 'baby', 'tools', 'flashlight',
+        'tablet', 'desktop', 'speaker', 'earbuds', 'usb', 'gamepad',
+        'calculator', 'pen', 'folder', 'clipboard', 'ticket', 'car',
+        'bicycle', 'plane', 'bus', 'train', 'bed', 'laundry', 'soap',
+        'brush', 'glasses', 'bottle', 'shopping_bag', 'shopping_cart',
+        'coffee', 'camping', 'hiking', 'soccer', 'swimming', 'music',
+        'microphone', 'palette', 'lock', 'money', 'receipt', 'calendar',
+        'clock', 'sun', 'moon', 'plant'
+      ];
+    }
+
     function validCustomItemCategory(d, categoryId) {
-      return d.keys().hasOnly(['name', 'createdAt', 'updatedAt'])
-        && d.keys().hasAll(['name', 'createdAt', 'updatedAt'])
+      return d.keys().hasOnly(['name', 'icon', 'createdAt', 'updatedAt'])
+        && d.keys().hasAll(['name', 'icon', 'createdAt', 'updatedAt'])
         && d.name is string
         && d.name.size() > 0
         && d.name.size() <= 40
@@ -333,9 +354,23 @@ service cloud.firestore {
           'all', 'electronics', 'documents', 'clothing', 'toiletries', 'other'
         ])
         && !(d.name in ['.', '..'])
+        && validCategoryIcon(d.icon)
         && d.createdAt is timestamp
-        && d.updatedAt is timestamp
+        && d.updatedAt is timestamp;
+    }
+
+    function validCustomItemCategoryCreate(d, categoryId) {
+      return validCustomItemCategory(d, categoryId)
         && d.updatedAt == d.createdAt;
+    }
+
+    function validCustomItemCategoryIconUpdate(categoryId) {
+      return validCustomItemCategory(request.resource.data, categoryId)
+        && request.resource.data.name == resource.data.name
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['icon', 'updatedAt'])
+        && request.resource.data.updatedAt >= resource.data.updatedAt;
     }
 
 
@@ -344,9 +379,11 @@ service cloud.firestore {
       match /categories/{categoryId} {
         allow read: if owner(uid);
         allow create: if owner(uid)
-          && validCustomItemCategory(request.resource.data, categoryId);
-        // Category names are immutable because Items store the name snapshot.
-        allow update: if false;
+          && validCustomItemCategoryCreate(request.resource.data, categoryId);
+        // Category names stay immutable because Items store the name snapshot.
+        // Custom category icons may be changed independently.
+        allow update: if owner(uid)
+          && validCustomItemCategoryIconUpdate(categoryId);
         allow delete: if owner(uid);
       }
       match /items/{itemId} {

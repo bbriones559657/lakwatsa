@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 
 import '../../models/item.dart';
+import '../../models/item_category.dart';
+import '../../repositories/firestore_item_category_repository.dart';
 import '../../repositories/firestore_item_repository.dart';
 import '../../services/auth_service.dart';
-
 import '../../theme/app_theme.dart';
+import '../../widgets/lakwatsa_ui.dart';
+import '../items/add_item_screen.dart';
 
 class AddItemsScreen extends StatefulWidget {
   final Set<String> existingItemIds;
@@ -21,17 +24,10 @@ class _AddItemsScreenState extends State<AddItemsScreen> {
   String selectedCategory = 'All';
 
   final Set<String> selectedItemIds = {};
+  final Map<String, Item> newlyCreatedItems = {};
 
   FirestoreItemRepository? itemRepository;
-
-  final List<String> categories = [
-    'All',
-    'Electronics',
-    'Documents',
-    'Clothing',
-    'Toiletries',
-    'Other',
-  ];
+  FirestoreItemCategoryRepository? categoryRepository;
 
   @override
   void initState() {
@@ -41,6 +37,7 @@ class _AddItemsScreenState extends State<AddItemsScreen> {
 
     if (user != null) {
       itemRepository = FirestoreItemRepository(userId: user.uid);
+      categoryRepository = FirestoreItemCategoryRepository(userId: user.uid);
     }
   }
 
@@ -72,7 +69,7 @@ class _AddItemsScreenState extends State<AddItemsScreen> {
   }
 
   Widget _buildBody() {
-    if (itemRepository == null) {
+    if (itemRepository == null || categoryRepository == null) {
       return Center(
         child: Text('Please sign in again.', style: AppTextStyles.body),
       );
@@ -80,14 +77,14 @@ class _AddItemsScreenState extends State<AddItemsScreen> {
 
     return StreamBuilder<List<Item>>(
       stream: itemRepository!.watchItems(),
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
+      builder: (context, itemSnapshot) {
+        if (itemSnapshot.hasError) {
           return Center(
             child: Padding(
               padding: const EdgeInsets.all(20),
               child: Text(
                 'Failed to load items.\n'
-                '${snapshot.error}',
+                '${itemSnapshot.error}',
                 textAlign: TextAlign.center,
                 style: AppTextStyles.body,
               ),
@@ -95,79 +92,157 @@ class _AddItemsScreenState extends State<AddItemsScreen> {
           );
         }
 
-        if (snapshot.connectionState == ConnectionState.waiting) {
+        if (itemSnapshot.connectionState == ConnectionState.waiting &&
+            !itemSnapshot.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
 
-        final items = snapshot.data ?? [];
+        final items = _mergeItems(itemSnapshot.data ?? const []);
 
-        final filteredItems = _filterItems(items);
+        return StreamBuilder<List<ItemCategory>>(
+          stream: categoryRepository!.watchCustomCategories(),
+          builder: (context, categorySnapshot) {
+            final customCategories = categorySnapshot.data ?? const [];
+            final categories = buildAddItemsCategoryNames(
+              items: items,
+              customCategories: customCategories,
+            );
+            final effectiveCategory = categories.contains(selectedCategory)
+                ? selectedCategory
+                : 'All';
+            final filteredItems = _filterItems(
+              items,
+              category: effectiveCategory,
+            );
 
-        return Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
-              child: _SearchField(
-                controller: searchController,
-                onChanged: (_) {
-                  setState(() {});
-                },
-              ),
-            ),
-
-            SizedBox(
-              height: 48,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                itemCount: categories.length,
-                separatorBuilder: (_, _) {
-                  return const SizedBox(width: 8);
-                },
-                itemBuilder: (context, index) {
-                  final category = categories[index];
-
-                  return _CategoryChip(
-                    label: category,
-                    selected: selectedCategory == category,
-                    onTap: () {
-                      setState(() {
-                        selectedCategory = category;
-                      });
+            return Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
+                  child: LakwatsaSearchField(
+                    controller: searchController,
+                    hintText: 'Search items...',
+                    margin: EdgeInsets.zero,
+                    onChanged: (_) {
+                      setState(() {});
                     },
-                  );
-                },
-              ),
-            ),
-
-            Expanded(child: _buildItemsList(filteredItems)),
-
-            SafeArea(
-              top: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 10, 20, 16),
-                child: _AddButton(
-                  count: selectedItemIds.length,
-                  onPressed: selectedItemIds.isEmpty
-                      ? null
-                      : () {
-                          _addSelectedItems(items);
-                        },
+                  ),
                 ),
-              ),
-            ),
-          ],
+
+                SizedBox(
+                  height: 48,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    itemCount: categories.length,
+                    separatorBuilder: (_, _) {
+                      return const SizedBox(width: 8);
+                    },
+                    itemBuilder: (context, index) {
+                      final category = categories[index];
+
+                      return _CategoryChip(
+                        label: category,
+                        selected: effectiveCategory == category,
+                        onTap: () {
+                          setState(() {
+                            selectedCategory = category;
+                          });
+                        },
+                      );
+                    },
+                  ),
+                ),
+
+                if (categorySnapshot.hasError)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 6, 20, 0),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Custom categories could not be refreshed. Existing '
+                        'Item categories are still available.',
+                        style: AppTextStyles.body.copyWith(
+                          color: AppColors.muted,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
+                  ),
+
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+                  child: _CreateNewItemButton(onPressed: _createNewItem),
+                ),
+
+                Expanded(child: _buildItemsList(filteredItems)),
+
+                SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 10, 20, 16),
+                    child: _AddButton(
+                      count: selectedItemIds.length,
+                      onPressed: selectedItemIds.isEmpty
+                          ? null
+                          : () {
+                              _addSelectedItems(items);
+                            },
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
         );
       },
     );
   }
 
-  List<Item> _filterItems(List<Item> items) {
+  List<Item> _mergeItems(List<Item> streamedItems) {
+    final merged = <String, Item>{
+      for (final item in streamedItems) item.id: item,
+    };
+
+    for (final item in newlyCreatedItems.values) {
+      merged.putIfAbsent(item.id, () => item);
+    }
+
+    return merged.values.toList();
+  }
+
+  Future<void> _createNewItem() async {
+    final createdItem = await Navigator.push<Item>(
+      context,
+      MaterialPageRoute(
+        builder: (context) {
+          return const AddItemScreen(returnSavedItem: true);
+        },
+      ),
+    );
+
+    if (!mounted || createdItem == null) {
+      return;
+    }
+
+    if (widget.existingItemIds.contains(createdItem.id)) {
+      return;
+    }
+
+    setState(() {
+      newlyCreatedItems[createdItem.id] = createdItem;
+      selectedItemIds.add(createdItem.id);
+      selectedCategory = 'All';
+      searchController.clear();
+    });
+  }
+
+  List<Item> _filterItems(List<Item> items, {required String category}) {
     final searchText = searchController.text.trim().toLowerCase();
 
     return items.where((item) {
       final matchesCategory =
-          selectedCategory == 'All' || item.category == selectedCategory;
+          category == 'All' || ItemCategory.sameName(item.category, category);
 
       final matchesSearch =
           searchText.isEmpty || item.name.toLowerCase().contains(searchText);
@@ -223,31 +298,86 @@ class _AddItemsScreenState extends State<AddItemsScreen> {
   }
 }
 
-class _SearchField extends StatelessWidget {
-  final TextEditingController controller;
-  final ValueChanged<String> onChanged;
+List<String> buildAddItemsCategoryNames({
+  required List<Item> items,
+  required List<ItemCategory> customCategories,
+}) {
+  final names = <String>['All', ...ItemCategory.builtInNames];
+  final extras = <String>[];
 
-  const _SearchField({required this.controller, required this.onChanged});
+  void collect(String value) {
+    final name = value.trim();
+
+    if (name.isEmpty ||
+        names.any((existing) => ItemCategory.sameName(existing, name)) ||
+        extras.any((existing) => ItemCategory.sameName(existing, name))) {
+      return;
+    }
+
+    extras.add(name);
+  }
+
+  for (final category in customCategories) {
+    collect(category.name);
+  }
+
+  for (final item in items) {
+    collect(item.category);
+  }
+
+  extras.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+  names.addAll(extras);
+
+  return names;
+}
+
+class _CreateNewItemButton extends StatelessWidget {
+  final VoidCallback onPressed;
+
+  const _CreateNewItemButton({required this.onPressed});
 
   @override
   Widget build(BuildContext context) {
-    return TextField(
-      controller: controller,
-      onChanged: onChanged,
-      style: AppTextStyles.body,
-      decoration: InputDecoration(
-        hintText: 'Search items',
-        hintStyle: AppTextStyles.body.copyWith(color: AppColors.muted),
-        prefixIcon: const Icon(Icons.search, color: AppColors.ink),
-        filled: true,
-        fillColor: AppColors.card,
-        enabledBorder: OutlineInputBorder(
-          borderSide: const BorderSide(color: AppColors.ink, width: 2),
+    return Semantics(
+      button: true,
+      label: 'Add a new item to My Items',
+      child: Container(
+        width: double.infinity,
+        height: 48,
+        decoration: BoxDecoration(
+          color: AppColors.card,
+          border: Border.all(color: AppColors.ink, width: 2),
           borderRadius: BorderRadius.circular(4),
+          boxShadow: const [
+            BoxShadow(color: AppColors.ink, offset: Offset(3, 3)),
+          ],
         ),
-        focusedBorder: OutlineInputBorder(
-          borderSide: const BorderSide(color: AppColors.ink, width: 2),
-          borderRadius: BorderRadius.circular(4),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onPressed,
+            borderRadius: BorderRadius.circular(4),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.add_circle_outline,
+                    color: AppColors.ink,
+                    size: 21,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      '+ Add New Item',
+                      style: AppTextStyles.bodyBold,
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right, color: AppColors.ink),
+                ],
+              ),
+            ),
+          ),
         ),
       ),
     );
@@ -267,20 +397,36 @@ class _CategoryChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: selected ? AppColors.ink : AppColors.card,
-          border: Border.all(color: AppColors.ink, width: 1.5),
-          borderRadius: BorderRadius.circular(4),
-        ),
-        alignment: Alignment.center,
-        child: Text(
-          label,
-          style: AppTextStyles.bodyBold.copyWith(
-            color: selected ? AppColors.background : AppColors.ink,
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: 'Filter by $label',
+      child: SizedBox(
+        height: AppMetrics.touchTarget,
+        child: Center(
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(14),
+              child: Container(
+                height: 28,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                decoration: BoxDecoration(
+                  color: selected ? AppColors.ink : AppColors.card,
+                  border: Border.all(color: AppColors.ink, width: 1.5),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  label,
+                  style: AppTextStyles.bodyBold.copyWith(
+                    color: selected ? AppColors.background : AppColors.ink,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+            ),
           ),
         ),
       ),

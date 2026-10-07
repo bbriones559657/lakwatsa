@@ -175,6 +175,7 @@ test('custom Item categories are owner-only and schema-valid', async () => {
 
   await assertSucceeds(setDoc(travel, {
     name: 'Travel Gear',
+    icon: 'inventory',
     createdAt: now,
     updatedAt: now,
   }));
@@ -182,44 +183,85 @@ test('custom Item categories are owner-only and schema-valid', async () => {
   await assertFails(getDoc(categoryRef(bob, 'travel gear')));
   await assertFails(setDoc(categoryRef(bob, 'private'), {
     name: 'Private',
+    icon: 'inventory',
     createdAt: now,
     updatedAt: now,
   }));
 
   await assertFails(setDoc(categoryRef(alice, 'electronics'), {
-    name: 'Electronics',
-    createdAt: now,
-    updatedAt: now,
+    name: 'Electronics', icon: 'electronics', createdAt: now, updatedAt: now,
   }));
   await assertFails(setDoc(categoryRef(alice, 'electronics'), {
-    name: 'electronics',
-    createdAt: now,
-    updatedAt: now,
+    name: 'electronics', icon: 'electronics', createdAt: now, updatedAt: now,
   }));
   await assertFails(setDoc(categoryRef(alice, 'wrong-id'), {
-    name: 'Travel Gear',
-    createdAt: now,
-    updatedAt: now,
+    name: 'Travel Gear', icon: 'inventory', createdAt: now, updatedAt: now,
   }));
   await assertFails(setDoc(categoryRef(alice, ' travel gear '), {
-    name: ' Travel Gear ',
-    createdAt: now,
-    updatedAt: now,
+    name: ' Travel Gear ', icon: 'inventory', createdAt: now, updatedAt: now,
   }));
   await assertFails(setDoc(categoryRef(alice, 'all'), {
-    name: 'All',
-    createdAt: now,
-    updatedAt: now,
+    name: 'All', icon: 'inventory', createdAt: now, updatedAt: now,
   }));
   await assertFails(setDoc(categoryRef(alice, 'broken'), {
-    name: 'Broken',
-    createdAt: now,
+    name: 'Broken', icon: 'inventory', createdAt: now,
+  }));
+  await assertFails(setDoc(categoryRef(alice, 'bad-icon'), {
+    name: 'Bad Icon', icon: 'anything', createdAt: now, updatedAt: now,
+  }));
+
+  const supportedCategoryIcons = [
+    'inventory', 'star', 'favorite', 'gift', 'bookmark',
+    'electronics', 'laptop', 'phone', 'camera', 'camera_alt',
+    'camera_front', 'camera_rear', 'video_camera', 'headphones',
+    'charger', 'battery', 'cable', 'keyboard', 'mouse', 'watch',
+    'passport', 'id', 'wallet', 'keys', 'luggage', 'backpack',
+    'umbrella', 'map', 'beach', 'clothing', 'toiletries', 'medicine',
+    'first_aid', 'health', 'documents', 'book', 'school', 'work',
+    'notes', 'food', 'drink', 'kitchen', 'home', 'water', 'fitness',
+    'sports', 'pets', 'baby', 'tools', 'flashlight',
+    'tablet', 'desktop', 'speaker', 'earbuds', 'usb', 'gamepad',
+    'calculator', 'pen', 'folder', 'clipboard', 'ticket', 'car',
+    'bicycle', 'plane', 'bus', 'train', 'bed', 'laundry', 'soap',
+    'brush', 'glasses', 'bottle', 'shopping_bag', 'shopping_cart',
+    'coffee', 'camping', 'hiking', 'soccer', 'swimming', 'music',
+    'microphone', 'palette', 'lock', 'money', 'receipt', 'calendar',
+    'clock', 'sun', 'moon', 'plant',
+  ];
+
+  for (const icon of supportedCategoryIcons) {
+    await assertSucceeds(updateDoc(travel, {
+      icon,
+      updatedAt: later,
+    }));
+  }
+  assert.equal((await getDoc(travel)).data().icon, 'plant');
+
+  await assertFails(updateDoc(travel, {
+    icon: 'anything',
+    updatedAt: later,
   }));
   await assertFails(updateDoc(travel, {
     name: 'Renamed',
     updatedAt: later,
   }));
+
+  const legacy = categoryRef(alice, 'legacy category');
+  await environment.withSecurityRulesDisabled(async context => {
+    await setDoc(categoryRef(context.firestore(), 'legacy category'), {
+      name: 'Legacy Category',
+      createdAt: now,
+      updatedAt: now,
+    });
+  });
+  await assertSucceeds(updateDoc(legacy, {
+    icon: 'toiletries',
+    updatedAt: later,
+  }));
+  assert.equal((await getDoc(legacy)).data().icon, 'toiletries');
+
   await assertSucceeds(deleteDoc(travel));
+  await assertSucceeds(deleteDoc(legacy));
 });
 
 test('new Activities must start UPCOMING and belong to the caller', async () => {

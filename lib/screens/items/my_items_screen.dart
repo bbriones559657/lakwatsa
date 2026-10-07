@@ -320,23 +320,33 @@ class _CategoryChip extends StatelessWidget {
       button: true,
       selected: selected,
       label: 'Filter by $text',
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14),
-          decoration: BoxDecoration(
-            color: selected ? AppColors.ink : AppColors.background,
-            border: Border.all(color: AppColors.ink, width: 2),
-            borderRadius: BorderRadius.circular(18),
-          ),
-          alignment: Alignment.center,
-          child: Text(
-            text,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: AppTextStyles.bodyBold.copyWith(
-              fontSize: 11,
-              color: selected ? AppColors.background : AppColors.ink,
+      child: SizedBox(
+        height: AppMetrics.touchTarget,
+        child: Center(
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(14),
+              child: Container(
+                height: 28,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                decoration: BoxDecoration(
+                  color: selected ? AppColors.ink : AppColors.background,
+                  border: Border.all(color: AppColors.ink, width: 2),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  text,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTextStyles.bodyBold.copyWith(
+                    fontSize: 11,
+                    color: selected ? AppColors.background : AppColors.ink,
+                  ),
+                ),
+              ),
             ),
           ),
         ),
@@ -420,10 +430,11 @@ class _ItemCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
+    return Semantics(
+      button: true,
+      label: 'Edit ${item.name}',
       child: Container(
-        height: 76,
+        height: 72,
         decoration: BoxDecoration(
           color: AppColors.background,
           border: Border.all(color: AppColors.ink, width: 2.5),
@@ -432,7 +443,12 @@ class _ItemCard extends StatelessWidget {
             BoxShadow(color: AppColors.ink, offset: Offset(4, 4)),
           ],
         ),
-        child: Row(
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(4),
+            child: Row(
           children: [
             const SizedBox(width: 10),
 
@@ -503,7 +519,9 @@ class _ItemCard extends StatelessWidget {
                 ),
               ),
             ),
-          ],
+              ],
+            ),
+          ),
         ),
       ),
     );
