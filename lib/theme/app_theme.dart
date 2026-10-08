@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 class AppColors {
@@ -8,6 +9,26 @@ class AppColors {
   static const card = Color(0xFFEDE0D9);
   static const green = Color(0xFF4A8C72);
   static const orange = Color(0xFFC4853A);
+}
+
+class AppSystemUi {
+  static const light = SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: Brightness.dark,
+    statusBarBrightness: Brightness.light,
+    systemNavigationBarColor: AppColors.background,
+    systemNavigationBarIconBrightness: Brightness.dark,
+  );
+
+  static const dark = SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: Brightness.light,
+    statusBarBrightness: Brightness.dark,
+    systemNavigationBarColor: AppColors.ink,
+    systemNavigationBarIconBrightness: Brightness.light,
+  );
+
+  static const splash = dark;
 }
 
 class AppMetrics {
@@ -76,6 +97,7 @@ class AppTheme {
         brightness: Brightness.light,
       ),
       textTheme: GoogleFonts.plusJakartaSansTextTheme(),
+      appBarTheme: const AppBarTheme(systemOverlayStyle: AppSystemUi.light),
     );
   }
 }

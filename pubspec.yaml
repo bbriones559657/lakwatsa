@@ -58,6 +58,8 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+  flutter_native_splash: ^2.4.8
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -68,6 +70,35 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  assets:
+    - assets/branding/splash_logo.png
+    - assets/branding/splash_background.png
+    - assets/branding/lakwatsa_wordmark.png
+    - assets/branding/fonts/
+
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: assets/branding/app_icon.png
+  adaptive_icon_background: "#EDE0D9"
+  # Scaled from the supplied foreground so the mark is legible in launcher masks.
+  adaptive_icon_foreground: assets/branding/app_icon_foreground_adaptive.png
+  adaptive_icon_foreground_inset: 0
+  min_sdk_android: 24
+
+flutter_native_splash:
+  color: "#1C1918"
+  image: assets/branding/splash_logo.png
+  # The Android 24-30 launch backgrounds also layer a cream plate behind this
+  # transparent dark-ink mark; keep that layer when regenerating resources.
+  android: true
+  ios: false
+  web: false
+  android_12:
+    color: "#1C1918"
+    image: assets/branding/splash_logo.png
+    icon_background_color: "#EDE0D9"
 
   # To add assets to your application, add an assets section, like this:
   # assets:
