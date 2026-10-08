@@ -184,218 +184,225 @@ class _SignInScreenState extends State<SignInScreen> {
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                        const _BrandMark(),
-                        SizedBox(height: compactHeight ? 12 : 16),
-                        Text(
-                          'Lakwatsa',
-                          style: AppTextStyles.heading.copyWith(
-                            fontSize: compactHeight ? 34 : 38,
-                            fontWeight: FontWeight.w800,
-                            height: 1.1,
+                          const _BrandMark(),
+                          SizedBox(height: compactHeight ? 12 : 16),
+                          Text(
+                            'Lakwatsa',
+                            style: AppTextStyles.heading.copyWith(
+                              fontSize: compactHeight ? 34 : 38,
+                              fontWeight: FontWeight.w800,
+                              height: 1.1,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 9),
-                        Text(
-                          'pack smart. scan easy.',
-                          textAlign: TextAlign.center,
-                          style: AppTextStyles.pixel.copyWith(fontSize: 8),
-                        ),
-                        SizedBox(height: compactHeight ? 14 : 18),
-                        Container(
-                          width: 36,
-                          height: 3,
-                          decoration: BoxDecoration(
-                            color: AppColors.ink,
-                            borderRadius: BorderRadius.circular(1),
+                          const SizedBox(height: 9),
+                          Text(
+                            'pack smart. scan easy.',
+                            textAlign: TextAlign.center,
+                            style: AppTextStyles.pixel.copyWith(fontSize: 8),
                           ),
-                        ),
-                        SizedBox(height: compactHeight ? 28 : 48),
-                        _PixelCard(
-                          child: Form(
-                            key: formKey,
-                            child: AutofillGroup(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    isRegisterMode
-                                        ? 'Create your account'
-                                        : 'Sign in to continue',
-                                    style: AppTextStyles.bodyBold.copyWith(
-                                      fontSize: 17,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 5),
-                                  Text(
-                                    isRegisterMode
-                                        ? 'Keep your items and lists ready wherever you go.'
-                                        : 'Your items. Your lists. Always ready.',
-                                    style: AppTextStyles.body.copyWith(
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 16),
-                                  Container(height: 2, color: AppColors.ink),
-                                  const SizedBox(height: 18),
-                                  const _FieldLabel('Email'),
-                                  const SizedBox(height: 7),
-                                  _AuthTextField(
-                                    controller: emailController,
-                                    focusNode: emailFocusNode,
-                                    enabled: !isLoading,
-                                    hintText: 'you@example.com',
-                                    keyboardType: TextInputType.emailAddress,
-                                    textInputAction: TextInputAction.next,
-                                    autofillHints: const [AutofillHints.email],
-                                    onChanged: (_) => _clearServerError(),
-                                    validator: (value) {
-                                      return AuthFormValidation.validateEmail(
-                                        value ?? '',
-                                      );
-                                    },
-                                    onSubmitted: (_) {
-                                      passwordFocusNode.requestFocus();
-                                    },
-                                  ),
-                                  const SizedBox(height: 15),
-                                  const _FieldLabel('Password'),
-                                  const SizedBox(height: 7),
-                                  _AuthTextField(
-                                    controller: passwordController,
-                                    focusNode: passwordFocusNode,
-                                    enabled: !isLoading,
-                                    hintText: isRegisterMode
-                                        ? 'At least 6 characters'
-                                        : 'Enter your password',
-                                    obscureText: obscurePassword,
-                                    enableSuggestions: false,
-                                    autocorrect: false,
-                                    textInputAction: isRegisterMode
-                                        ? TextInputAction.next
-                                        : TextInputAction.done,
-                                    autofillHints: [
+                          SizedBox(height: compactHeight ? 14 : 18),
+                          Container(
+                            width: 36,
+                            height: 3,
+                            decoration: BoxDecoration(
+                              color: AppColors.ink,
+                              borderRadius: BorderRadius.circular(1),
+                            ),
+                          ),
+                          SizedBox(height: compactHeight ? 28 : 48),
+                          _PixelCard(
+                            child: Form(
+                              key: formKey,
+                              child: AutofillGroup(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
                                       isRegisterMode
-                                          ? AutofillHints.newPassword
-                                          : AutofillHints.password,
-                                    ],
-                                    onChanged: (_) => _clearServerError(),
-                                    validator: (value) {
-                                      return AuthFormValidation.validatePassword(
-                                        value ?? '',
-                                        isRegistration: isRegisterMode,
-                                      );
-                                    },
-                                    onSubmitted: (_) {
-                                      if (isRegisterMode) {
-                                        confirmPasswordFocusNode.requestFocus();
-                                      } else {
-                                        _submit();
-                                      }
-                                    },
-                                    suffix: _VisibilityButton(
-                                      isObscured: obscurePassword,
-                                      onPressed: isLoading
-                                          ? null
-                                          : () {
-                                              setState(() {
-                                                obscurePassword =
-                                                    !obscurePassword;
-                                              });
-                                            },
+                                          ? 'Create your account'
+                                          : 'Sign in to continue',
+                                      style: AppTextStyles.bodyBold.copyWith(
+                                        fontSize: 17,
+                                      ),
                                     ),
-                                  ),
-                                  if (isRegisterMode) ...[
-                                    const SizedBox(height: 15),
-                                    const _FieldLabel('Confirm Password'),
+                                    const SizedBox(height: 5),
+                                    Text(
+                                      isRegisterMode
+                                          ? 'Keep your items and lists ready wherever you go.'
+                                          : 'Your items. Your lists. Always ready.',
+                                      style: AppTextStyles.body.copyWith(
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    Container(height: 2, color: AppColors.ink),
+                                    const SizedBox(height: 18),
+                                    const _FieldLabel('Email'),
                                     const SizedBox(height: 7),
                                     _AuthTextField(
-                                      controller: confirmPasswordController,
-                                      focusNode: confirmPasswordFocusNode,
+                                      controller: emailController,
+                                      focusNode: emailFocusNode,
                                       enabled: !isLoading,
-                                      hintText: 'Re-enter your password',
-                                      obscureText: obscureConfirmPassword,
-                                      enableSuggestions: false,
-                                      autocorrect: false,
-                                      textInputAction: TextInputAction.done,
+                                      hintText: 'you@example.com',
+                                      keyboardType: TextInputType.emailAddress,
+                                      textInputAction: TextInputAction.next,
                                       autofillHints: const [
-                                        AutofillHints.newPassword,
+                                        AutofillHints.email,
                                       ],
                                       onChanged: (_) => _clearServerError(),
                                       validator: (value) {
-                                        return AuthFormValidation
-                                            .validateConfirmPassword(
-                                              password:
-                                                  passwordController.text,
-                                              confirmation: value ?? '',
-                                            );
+                                        return AuthFormValidation.validateEmail(
+                                          value ?? '',
+                                        );
                                       },
                                       onSubmitted: (_) {
-                                        _submit();
+                                        passwordFocusNode.requestFocus();
+                                      },
+                                    ),
+                                    const SizedBox(height: 15),
+                                    const _FieldLabel('Password'),
+                                    const SizedBox(height: 7),
+                                    _AuthTextField(
+                                      controller: passwordController,
+                                      focusNode: passwordFocusNode,
+                                      enabled: !isLoading,
+                                      hintText: isRegisterMode
+                                          ? 'At least 6 characters'
+                                          : 'Enter your password',
+                                      obscureText: obscurePassword,
+                                      enableSuggestions: false,
+                                      autocorrect: false,
+                                      textInputAction: isRegisterMode
+                                          ? TextInputAction.next
+                                          : TextInputAction.done,
+                                      autofillHints: [
+                                        isRegisterMode
+                                            ? AutofillHints.newPassword
+                                            : AutofillHints.password,
+                                      ],
+                                      onChanged: (_) => _clearServerError(),
+                                      validator: (value) {
+                                        return AuthFormValidation.validatePassword(
+                                          value ?? '',
+                                          isRegistration: isRegisterMode,
+                                        );
+                                      },
+                                      onSubmitted: (_) {
+                                        if (isRegisterMode) {
+                                          confirmPasswordFocusNode
+                                              .requestFocus();
+                                        } else {
+                                          _submit();
+                                        }
                                       },
                                       suffix: _VisibilityButton(
-                                        isObscured: obscureConfirmPassword,
+                                        isObscured: obscurePassword,
                                         onPressed: isLoading
                                             ? null
                                             : () {
                                                 setState(() {
-                                                  obscureConfirmPassword =
-                                                      !obscureConfirmPassword;
+                                                  obscurePassword =
+                                                      !obscurePassword;
                                                 });
                                               },
                                       ),
                                     ),
-                                  ],
-                                  if (errorMessage != null) ...[
-                                    const SizedBox(height: 14),
-                                    _ErrorMessage(message: errorMessage!),
-                                  ],
-                                  const SizedBox(height: 20),
-                                  _PrimaryButton(
-                                    text: isRegisterMode
-                                        ? 'Create Account'
-                                        : 'Sign In',
-                                    isLoading: isLoading,
-                                    onPressed: isLoading ? null : _submit,
-                                  ),
-                                  const SizedBox(height: 10),
-                                  SizedBox(
-                                    width: double.infinity,
-                                    child: TextButton(
-                                      onPressed: isLoading ? null : _switchMode,
-                                      style: TextButton.styleFrom(
-                                        minimumSize: const Size.fromHeight(44),
-                                        foregroundColor: AppColors.ink,
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                          vertical: 10,
+                                    if (isRegisterMode) ...[
+                                      const SizedBox(height: 15),
+                                      const _FieldLabel('Confirm Password'),
+                                      const SizedBox(height: 7),
+                                      _AuthTextField(
+                                        controller: confirmPasswordController,
+                                        focusNode: confirmPasswordFocusNode,
+                                        enabled: !isLoading,
+                                        hintText: 'Re-enter your password',
+                                        obscureText: obscureConfirmPassword,
+                                        enableSuggestions: false,
+                                        autocorrect: false,
+                                        textInputAction: TextInputAction.done,
+                                        autofillHints: const [
+                                          AutofillHints.newPassword,
+                                        ],
+                                        onChanged: (_) => _clearServerError(),
+                                        validator: (value) {
+                                          return AuthFormValidation.validateConfirmPassword(
+                                            password: passwordController.text,
+                                            confirmation: value ?? '',
+                                          );
+                                        },
+                                        onSubmitted: (_) {
+                                          _submit();
+                                        },
+                                        suffix: _VisibilityButton(
+                                          isObscured: obscureConfirmPassword,
+                                          onPressed: isLoading
+                                              ? null
+                                              : () {
+                                                  setState(() {
+                                                    obscureConfirmPassword =
+                                                        !obscureConfirmPassword;
+                                                  });
+                                                },
                                         ),
                                       ),
-                                      child: Text(
-                                        isRegisterMode
-                                            ? 'Already have an account? Sign in'
-                                            : 'New to Lakwatsa? Create account',
-                                        textAlign: TextAlign.center,
-                                        style: AppTextStyles.bodyBold.copyWith(
-                                          fontSize: 12,
-                                          decoration: TextDecoration.underline,
+                                    ],
+                                    if (errorMessage != null) ...[
+                                      const SizedBox(height: 14),
+                                      _ErrorMessage(message: errorMessage!),
+                                    ],
+                                    const SizedBox(height: 20),
+                                    _PrimaryButton(
+                                      text: isRegisterMode
+                                          ? 'Create Account'
+                                          : 'Sign In',
+                                      isLoading: isLoading,
+                                      onPressed: isLoading ? null : _submit,
+                                    ),
+                                    const SizedBox(height: 10),
+                                    SizedBox(
+                                      width: double.infinity,
+                                      child: TextButton(
+                                        onPressed: isLoading
+                                            ? null
+                                            : _switchMode,
+                                        style: TextButton.styleFrom(
+                                          minimumSize: const Size.fromHeight(
+                                            44,
+                                          ),
+                                          foregroundColor: AppColors.ink,
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 10,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          isRegisterMode
+                                              ? 'Already have an account? Sign in'
+                                              : 'New to Lakwatsa? Create account',
+                                          textAlign: TextAlign.center,
+                                          style: AppTextStyles.bodyBold
+                                              .copyWith(
+                                                fontSize: 12,
+                                                decoration:
+                                                    TextDecoration.underline,
+                                              ),
                                         ),
                                       ),
                                     ),
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                        SizedBox(height: compactHeight ? 20 : 28),
-                        Text(
-                          'your items. always ready.',
-                          textAlign: TextAlign.center,
-                          style: AppTextStyles.pixel.copyWith(
-                            fontSize: 8,
-                            color: AppColors.muted,
+                          SizedBox(height: compactHeight ? 20 : 28),
+                          Text(
+                            'your items. always ready.',
+                            textAlign: TextAlign.center,
+                            style: AppTextStyles.pixel.copyWith(
+                              fontSize: 8,
+                              color: AppColors.muted,
+                            ),
                           ),
-                        ),
                         ],
                       ),
                     ),
@@ -453,8 +460,9 @@ class _BrandMark extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 78,
-      height: 78,
+      key: const Key('auth-brand-mark'),
+      width: 88,
+      height: 88,
       child: Stack(
         clipBehavior: Clip.none,
         children: [
@@ -462,8 +470,8 @@ class _BrandMark extends StatelessWidget {
             left: 3,
             top: 3,
             child: Container(
-              width: 72,
-              height: 72,
+              width: 82,
+              height: 82,
               decoration: BoxDecoration(
                 color: AppColors.card,
                 border: Border.all(color: AppColors.ink, width: 2.5),
@@ -473,11 +481,19 @@ class _BrandMark extends StatelessWidget {
                 ],
               ),
               alignment: Alignment.center,
-              child: Text(
-                'LK',
-                style: AppTextStyles.heading.copyWith(
-                  fontSize: 26,
-                  fontWeight: FontWeight.w800,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(3),
+                child: OverflowBox(
+                  maxWidth: 160,
+                  maxHeight: 160,
+                  child: Image.asset(
+                    'assets/branding/splash_logo.png',
+                    key: const Key('auth-backpack-logo'),
+                    width: 160,
+                    height: 160,
+                    fit: BoxFit.contain,
+                    semanticLabel: 'Lakwatsa backpack logo',
+                  ),
                 ),
               ),
             ),
@@ -540,10 +556,7 @@ class _FieldLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: AppTextStyles.bodyBold.copyWith(fontSize: 13),
-    );
+    return Text(text, style: AppTextStyles.bodyBold.copyWith(fontSize: 13));
   }
 }
 
@@ -655,10 +668,7 @@ class _VisibilityButton extends StatelessWidget {
   final bool isObscured;
   final VoidCallback? onPressed;
 
-  const _VisibilityButton({
-    required this.isObscured,
-    required this.onPressed,
-  });
+  const _VisibilityButton({required this.isObscured, required this.onPressed});
 
   @override
   Widget build(BuildContext context) {
@@ -688,10 +698,7 @@ class _ErrorMessage extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
           color: _SignInScreenState._errorBackground,
-          border: Border.all(
-            color: _SignInScreenState._errorColor,
-            width: 1.5,
-          ),
+          border: Border.all(color: _SignInScreenState._errorColor, width: 1.5),
           borderRadius: BorderRadius.circular(4),
         ),
         child: Row(
@@ -739,9 +746,7 @@ class _PrimaryButton extends StatelessWidget {
       child: Container(
         width: double.infinity,
         decoration: const BoxDecoration(
-          boxShadow: [
-            BoxShadow(color: AppColors.green, offset: Offset(4, 4)),
-          ],
+          boxShadow: [BoxShadow(color: AppColors.green, offset: Offset(4, 4))],
         ),
         child: Material(
           color: AppColors.ink,

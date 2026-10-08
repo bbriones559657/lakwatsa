@@ -6,9 +6,7 @@ void main() {
   testWidgets(
     'switching auth mode clears stale validation without clearing credentials',
     (tester) async {
-      await tester.pumpWidget(
-        const MaterialApp(home: SignInScreen()),
-      );
+      await tester.pumpWidget(const MaterialApp(home: SignInScreen()));
 
       final createAccountModeButton = find.text(
         'New to Lakwatsa? Create account',
@@ -50,4 +48,48 @@ void main() {
       );
     },
   );
+
+  testWidgets('Login and Register share the official backpack image', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(320, 568));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(const MaterialApp(home: SignInScreen()));
+
+    void expectBranding() {
+      final imageFinder = find.byKey(const Key('auth-backpack-logo'));
+      expect(imageFinder, findsOneWidget);
+      final image = tester.widget<Image>(imageFinder);
+      expect(
+        (image.image as AssetImage).assetName,
+        'assets/branding/splash_logo.png',
+      );
+      expect(image.width, 160);
+      expect(image.height, 160);
+      expect(image.fit, BoxFit.contain);
+      expect(find.text('LK'), findsNothing);
+      expect(
+        tester.getCenter(find.byKey(const Key('auth-brand-mark'))).dx,
+        closeTo(160, 1),
+      );
+      expect(tester.takeException(), isNull);
+    }
+
+    expectBranding();
+    final createAccount = find.text('New to Lakwatsa? Create account');
+    await tester.ensureVisible(createAccount);
+    await tester.tap(createAccount);
+    await tester.pumpAndSettle();
+    expect(find.text('Create your account'), findsOneWidget);
+    expectBranding();
+
+    await tester.ensureVisible(find.byType(TextFormField).last);
+    await tester.tap(find.byType(TextFormField).last);
+    tester.view.viewInsets = const FakeViewPadding(bottom: 250);
+    addTearDown(tester.view.resetViewInsets);
+    await tester.pump();
+    await tester.ensureVisible(find.text('Create Account'));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+  });
 }
