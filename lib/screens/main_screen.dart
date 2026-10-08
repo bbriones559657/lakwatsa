@@ -6,10 +6,12 @@ import '../models/activity.dart' as model;
 import '../models/item_list.dart';
 import '../repositories/firestore_activity_repository.dart';
 import '../services/activity_reminder_service.dart';
+import '../services/activity_reminder_navigation.dart';
 import '../services/auth_service.dart';
 import 'activities/activities_screen.dart';
 import 'activities/activity_details_screen.dart';
 import 'activities/activity_return_check_screen.dart';
+import 'auth/sign_out_dialog.dart';
 import 'home/home_screen.dart';
 import 'items/my_items_screen.dart';
 import 'lists/list_details_screen.dart';
@@ -32,8 +34,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   StreamSubscription<List<model.Activity>>? _reminderSubscription;
   StreamSubscription<ActivityReminderTapTarget>? _reminderTapSubscription;
   String? _reminderUserId;
-  String? _pendingReminderActivityId;
-  bool _openingReminderActivity = false;
+  ActivityReminderNavigation? _reminderNavigation;
+  bool _signOutDialogOpen = false;
   List<model.Activity> _latestReminderActivities = const [];
 
   @override
@@ -42,8 +44,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     pages = List<Widget?>.filled(_tabCount, null);
     pages[0] = _createPage(0);
-    _startReminderTapHandling();
     _startReminderSync();
+    _startReminderTapHandling();
   }
 
   void _startReminderTapHandling() {
@@ -55,8 +57,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             return;
           }
 
-          _pendingReminderActivityId = target.activityId;
-          _tryOpenPendingReminderActivity();
+          _reminderNavigation?.handleTap(target);
         });
 
     unawaited(ActivityReminderService.instance.initialize());
@@ -71,13 +72,22 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _reminderUserId = user.uid;
     ActivityReminderService.instance.activateUser(user.uid);
     final repository = FirestoreActivityRepository(userId: user.uid);
+    _reminderNavigation = ActivityReminderNavigation(
+      userId: user.uid,
+      loadActivity: repository.getActivity,
+      openActivity: _openReminderActivity,
+      showMessage: (message) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(message)));
+      },
+    );
 
     _reminderSubscription = repository.watchActivities().listen(
       (activities) {
         _latestReminderActivities = List<model.Activity>.unmodifiable(
           activities,
         );
-        _tryOpenPendingReminderActivity();
         _syncActivityReminders();
       },
       onError: (_) {
@@ -101,51 +111,39 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     );
   }
 
-  void _tryOpenPendingReminderActivity() {
-    final activityId = _pendingReminderActivityId;
-
-    if (!mounted || activityId == null || _openingReminderActivity) {
-      return;
-    }
-
-    model.Activity? targetActivity;
-    for (final activity in _latestReminderActivities) {
-      if (activity.id == activityId) {
-        targetActivity = activity;
-        break;
-      }
-    }
-
-    if (targetActivity == null) {
-      return;
-    }
-
-    _pendingReminderActivityId = null;
-    _openingReminderActivity = true;
-
-    final activity = targetActivity;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) {
-        _openingReminderActivity = false;
-        return;
-      }
-
-      setState(() {
-        currentIndex = 3;
-        pages[3] ??= _createPage(3);
-      });
-
-      Navigator.of(context)
-          .push(
-            MaterialPageRoute<void>(
-              builder: (context) => ActivityDetailsScreen(activity: activity),
-            ),
-          )
-          .whenComplete(() {
-            _openingReminderActivity = false;
-            _tryOpenPendingReminderActivity();
-          });
+  Future<void> _openReminderActivity(model.Activity activity) async {
+    if (!mounted || AuthService().currentUser?.uid != _reminderUserId) return;
+    setState(() {
+      currentIndex = 3;
+      pages[3] ??= _createPage(3);
     });
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (context) => ActivityDetailsScreen(activity: activity),
+      ),
+    );
+  }
+
+  Future<void> _signOut() async {
+    if (_signOutDialogOpen) return;
+    _signOutDialogOpen = true;
+    _reminderNavigation?.setPaused(true);
+    try {
+      await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const SignOutDialog(),
+      );
+    } finally {
+      _signOutDialogOpen = false;
+      if (mounted && AuthService().currentUser?.uid == _reminderUserId) {
+        // A failed Firebase sign-out can leave the session active after native
+        // reminder cleanup. Restore synchronization when the user stays.
+        ActivityReminderService.instance.activateUser(_reminderUserId!);
+        _syncActivityReminders();
+        _reminderNavigation?.setPaused(false);
+      }
+    }
   }
 
   @override
@@ -160,6 +158,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _reminderSubscription?.cancel();
     _reminderTapSubscription?.cancel();
+    _reminderNavigation?.dispose();
     super.dispose();
   }
 
@@ -172,6 +171,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         onOpenActivities: () => _selectTab(3),
         onContinueActivity: _openActiveReturnCheck,
         onOpenList: _openList,
+        onSignOut: _signOut,
       ),
       1 => const MyItemsScreen(),
       2 => const ListsScreen(),
@@ -193,7 +193,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   void _openCreateList() {
     setState(() {
-      pages[2] = const ListsScreen(openCreateOnStart: true);
+      // Each Home shortcut invocation must run the create-on-start action,
+      // including when the Lists tab already has mounted State.
+      pages[2] = ListsScreen(key: UniqueKey(), openCreateOnStart: true);
       currentIndex = 2;
     });
   }

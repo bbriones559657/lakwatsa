@@ -41,10 +41,7 @@ class _FakeListRepository extends Fake implements ListRepository {
   final List<ItemList> lists;
   final Map<String, List<String>> itemIdsByList;
 
-  _FakeListRepository({
-    required this.lists,
-    this.itemIdsByList = const {},
-  });
+  _FakeListRepository({required this.lists, this.itemIdsByList = const {}});
 
   @override
   Stream<List<ItemList>> watchLists() => Stream.value(lists);
@@ -159,6 +156,7 @@ void main() {
     tester,
   ) async {
     final activity = _activeActivity();
+    var signOutCalls = 0;
 
     await tester.pumpWidget(
       MaterialApp(
@@ -199,6 +197,7 @@ void main() {
                 ),
                 listRepository: _FakeListRepository(lists: const []),
                 profileInitial: 'T',
+                onSignOut: () => signOutCalls++,
                 onOpenItems: () {},
                 onCreateList: () {},
                 onOpenLists: () {},
@@ -215,6 +214,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
+
+    final signOut = find.widgetWithText(TextButton, 'Sign out');
+    expect(tester.getSize(signOut).height, greaterThanOrEqualTo(48));
+    await tester.tap(signOut);
+    expect(signOutCalls, 1);
 
     final actionText = find.text('Start Return Check →');
     await tester.ensureVisible(actionText);
@@ -284,10 +288,7 @@ void main() {
                   returnDraftsByActivity: {
                     activity.id: ActivityCheckDraft(
                       startedAt: DateTime(2026, 10, 6, 20),
-                      foundMethods: const {
-                        'item-1': 'MANUAL',
-                        'item-2': 'QR',
-                      },
+                      foundMethods: const {'item-1': 'MANUAL', 'item-2': 'QR'},
                     ),
                   },
                 ),

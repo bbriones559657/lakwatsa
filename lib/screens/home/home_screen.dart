@@ -19,6 +19,7 @@ class HomeScreen extends StatefulWidget {
   final VoidCallback onOpenActivities;
   final ValueChanged<model.Activity> onContinueActivity;
   final ValueChanged<ItemList> onOpenList;
+  final VoidCallback? onSignOut;
 
   // Optional repositories keep the dashboard testable without a live Firebase
   // app while production still builds its repositories from the signed-in user.
@@ -34,6 +35,7 @@ class HomeScreen extends StatefulWidget {
     required this.onOpenActivities,
     required this.onContinueActivity,
     required this.onOpenList,
+    this.onSignOut,
     this.activityRepository,
     this.listRepository,
     this.profileInitial,
@@ -66,7 +68,8 @@ class _HomeScreenState extends State<HomeScreen> {
       listRepository ??= FirestoreListRepository(userId: user.uid);
     }
 
-    profileInitial = widget.profileInitial ?? _initialFor(user?.displayName, user?.email);
+    profileInitial =
+        widget.profileInitial ?? _initialFor(user?.displayName, user?.email);
   }
 
   @override
@@ -78,7 +81,18 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             LakwatsaTopBar(
               title: 'Lakwatsa',
-              actions: [_ProfileBadge(initial: profileInitial)],
+              actions: [
+                _ProfileBadge(initial: profileInitial),
+                if (widget.onSignOut != null)
+                  TextButton(
+                    onPressed: widget.onSignOut,
+                    style: TextButton.styleFrom(
+                      foregroundColor: AppColors.ink,
+                      minimumSize: const Size(72, 48),
+                    ),
+                    child: const Text('Sign out'),
+                  ),
+              ],
             ),
             Expanded(
               child: SingleChildScrollView(
@@ -186,10 +200,9 @@ class _ActivityOverview extends StatelessWidget {
       stream: repository!.watchActivities(),
       builder: (context, snapshot) {
         final activities = snapshot.data ?? const <model.Activity>[];
-        final activeActivities = activities
-            .where((activity) => activity.isActive)
-            .toList()
-          ..sort((a, b) => b.startAt.compareTo(a.startAt));
+        final activeActivities =
+            activities.where((activity) => activity.isActive).toList()
+              ..sort((a, b) => b.startAt.compareTo(a.startAt));
 
         final activeActivity = activeActivities.isEmpty
             ? null
@@ -208,7 +221,8 @@ class _ActivityOverview extends StatelessWidget {
             else if (snapshot.hasError)
               _DashboardMessageCard(
                 title: 'Could not load activities',
-                message: 'Your dashboard will update when the connection returns.',
+                message:
+                    'Your dashboard will update when the connection returns.',
                 actionLabel: 'Activities',
                 onPressed: onOpenActivities,
               )
@@ -331,8 +345,7 @@ class _ActiveActivityCardState extends State<_ActiveActivityCard> {
                   final progress = _returnProgress(
                     items: items,
                     draft: draft,
-                    hasError:
-                        itemSnapshot.hasError || draftSnapshot.hasError,
+                    hasError: itemSnapshot.hasError || draftSnapshot.hasError,
                   );
                   final hasStarted = draft != null;
 
@@ -348,10 +361,7 @@ class _ActiveActivityCardState extends State<_ActiveActivityCard> {
                           borderRadius: BorderRadius.circular(2),
                         ),
                         alignment: Alignment.center,
-                        child: Text(
-                          'ACTIVE',
-                          style: AppTextStyles.pixelWhite,
-                        ),
+                        child: Text('ACTIVE', style: AppTextStyles.pixelWhite),
                       ),
                       const SizedBox(height: 6),
                       Text(
@@ -657,10 +667,7 @@ class _DashboardActionButton extends StatelessWidget {
       height: visualHeight,
       decoration: BoxDecoration(
         color: filled ? AppColors.ink : AppColors.background,
-        border: Border.all(
-          color: AppColors.ink,
-          width: borderWidth,
-        ),
+        border: Border.all(color: AppColors.ink, width: borderWidth),
         borderRadius: BorderRadius.circular(AppMetrics.radius),
         boxShadow: [
           BoxShadow(
@@ -746,7 +753,10 @@ class _RecentLists extends StatelessWidget {
 
   Widget _buildLists() {
     if (repository == null) {
-      return Text('Sign in again to load your lists.', style: AppTextStyles.body);
+      return Text(
+        'Sign in again to load your lists.',
+        style: AppTextStyles.body,
+      );
     }
 
     return StreamBuilder<List<ItemList>>(

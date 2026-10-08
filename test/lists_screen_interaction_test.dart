@@ -37,6 +37,31 @@ class _ListRepository extends Fake implements ListRepository {
 }
 
 void main() {
+  testWidgets('fresh Home shortcut opens Create even after visiting Lists', (
+    tester,
+  ) async {
+    final repository = _ListRepository();
+    Widget screen({bool fromHome = false}) => MaterialApp(
+      home: ListsScreen(
+        key: fromHome ? UniqueKey() : null,
+        openCreateOnStart: fromHome,
+        listRepository: repository,
+      ),
+    );
+
+    await tester.pumpWidget(screen());
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
+    for (var attempt = 0; attempt < 2; attempt++) {
+      await tester.pumpWidget(screen(fromHome: true));
+      await tester.pumpAndSettle();
+      expect(find.widgetWithText(ElevatedButton, 'Create'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsNothing);
+    }
+  });
+
   testWidgets('List dialog stays usable with a short viewport and keyboard', (
     tester,
   ) async {
