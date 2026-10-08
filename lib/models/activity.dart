@@ -75,4 +75,12 @@ class Activity {
   bool get isCompleted {
     return status == 'COMPLETED';
   }
+
+  bool get isCancelled {
+    return status == 'CANCELLED';
+  }
+
+  bool get isFinished {
+    return isCompleted || isCancelled;
+  }
 }

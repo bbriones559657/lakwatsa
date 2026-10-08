@@ -53,6 +53,11 @@ void main() {
     expect(original.isActive, isFalse);
     expect(original.copyWith(status: 'ACTIVE').isActive, isTrue);
     expect(original.copyWith(status: 'COMPLETED').isCompleted, isTrue);
+
+    final cancelled = original.copyWith(status: 'CANCELLED');
+    expect(cancelled.isCancelled, isTrue);
+    expect(cancelled.isFinished, isTrue);
+    expect(original.copyWith(status: 'COMPLETED').isFinished, isTrue);
   });
 
   test('ActivityItem QR availability follows its snapshot', () {

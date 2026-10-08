@@ -175,6 +175,7 @@ test('custom Item categories are owner-only and schema-valid', async () => {
 
   await assertSucceeds(setDoc(travel, {
     name: 'Travel Gear',
+    icon: 'inventory',
     createdAt: now,
     updatedAt: now,
   }));
@@ -182,44 +183,85 @@ test('custom Item categories are owner-only and schema-valid', async () => {
   await assertFails(getDoc(categoryRef(bob, 'travel gear')));
   await assertFails(setDoc(categoryRef(bob, 'private'), {
     name: 'Private',
+    icon: 'inventory',
     createdAt: now,
     updatedAt: now,
   }));
 
   await assertFails(setDoc(categoryRef(alice, 'electronics'), {
-    name: 'Electronics',
-    createdAt: now,
-    updatedAt: now,
+    name: 'Electronics', icon: 'electronics', createdAt: now, updatedAt: now,
   }));
   await assertFails(setDoc(categoryRef(alice, 'electronics'), {
-    name: 'electronics',
-    createdAt: now,
-    updatedAt: now,
+    name: 'electronics', icon: 'electronics', createdAt: now, updatedAt: now,
   }));
   await assertFails(setDoc(categoryRef(alice, 'wrong-id'), {
-    name: 'Travel Gear',
-    createdAt: now,
-    updatedAt: now,
+    name: 'Travel Gear', icon: 'inventory', createdAt: now, updatedAt: now,
   }));
   await assertFails(setDoc(categoryRef(alice, ' travel gear '), {
-    name: ' Travel Gear ',
-    createdAt: now,
-    updatedAt: now,
+    name: ' Travel Gear ', icon: 'inventory', createdAt: now, updatedAt: now,
   }));
   await assertFails(setDoc(categoryRef(alice, 'all'), {
-    name: 'All',
-    createdAt: now,
-    updatedAt: now,
+    name: 'All', icon: 'inventory', createdAt: now, updatedAt: now,
   }));
   await assertFails(setDoc(categoryRef(alice, 'broken'), {
-    name: 'Broken',
-    createdAt: now,
+    name: 'Broken', icon: 'inventory', createdAt: now,
+  }));
+  await assertFails(setDoc(categoryRef(alice, 'bad-icon'), {
+    name: 'Bad Icon', icon: 'anything', createdAt: now, updatedAt: now,
+  }));
+
+  const supportedCategoryIcons = [
+    'inventory', 'star', 'favorite', 'gift', 'bookmark',
+    'electronics', 'laptop', 'phone', 'camera', 'camera_alt',
+    'camera_front', 'camera_rear', 'video_camera', 'headphones',
+    'charger', 'battery', 'cable', 'keyboard', 'mouse', 'watch',
+    'passport', 'id', 'wallet', 'keys', 'luggage', 'backpack',
+    'umbrella', 'map', 'beach', 'clothing', 'toiletries', 'medicine',
+    'first_aid', 'health', 'documents', 'book', 'school', 'work',
+    'notes', 'food', 'drink', 'kitchen', 'home', 'water', 'fitness',
+    'sports', 'pets', 'baby', 'tools', 'flashlight',
+    'tablet', 'desktop', 'speaker', 'earbuds', 'usb', 'gamepad',
+    'calculator', 'pen', 'folder', 'clipboard', 'ticket', 'car',
+    'bicycle', 'plane', 'bus', 'train', 'bed', 'laundry', 'soap',
+    'brush', 'glasses', 'bottle', 'shopping_bag', 'shopping_cart',
+    'coffee', 'camping', 'hiking', 'soccer', 'swimming', 'music',
+    'microphone', 'palette', 'lock', 'money', 'receipt', 'calendar',
+    'clock', 'sun', 'moon', 'plant',
+  ];
+
+  for (const icon of supportedCategoryIcons) {
+    await assertSucceeds(updateDoc(travel, {
+      icon,
+      updatedAt: later,
+    }));
+  }
+  assert.equal((await getDoc(travel)).data().icon, 'plant');
+
+  await assertFails(updateDoc(travel, {
+    icon: 'anything',
+    updatedAt: later,
   }));
   await assertFails(updateDoc(travel, {
     name: 'Renamed',
     updatedAt: later,
   }));
+
+  const legacy = categoryRef(alice, 'legacy category');
+  await environment.withSecurityRulesDisabled(async context => {
+    await setDoc(categoryRef(context.firestore(), 'legacy category'), {
+      name: 'Legacy Category',
+      createdAt: now,
+      updatedAt: now,
+    });
+  });
+  await assertSucceeds(updateDoc(legacy, {
+    icon: 'toiletries',
+    updatedAt: later,
+  }));
+  assert.equal((await getDoc(legacy)).data().icon, 'toiletries');
+
   await assertSucceeds(deleteDoc(travel));
+  await assertSucceeds(deleteDoc(legacy));
 });
 
 test('new Activities must start UPCOMING and belong to the caller', async () => {
@@ -417,6 +459,87 @@ test('Activity metadata edits are status-aware', async () => {
     activityDate: now,
     updatedAt: later,
   }));
+});
+
+test('Upcoming Activity cancellation clears its draft and becomes read-only', async () => {
+  const alice = client();
+  await seedActivity('UPCOMING');
+  await assertSucceeds(setDoc(
+    checkRef(alice, 'draft_before_activity'),
+    draft('BEFORE_ACTIVITY'),
+  ));
+
+  await assertFails(updateDoc(activityRef(alice), {
+    status: 'CANCELLED',
+    updatedAt: later,
+  }));
+
+  const cancel = writeBatch(alice);
+  cancel.update(activityRef(alice), {
+    status: 'CANCELLED',
+    updatedAt: later,
+  });
+  cancel.delete(checkRef(alice, 'draft_before_activity'));
+  await assertSucceeds(cancel.commit());
+
+  assert.equal((await getDoc(activityRef(alice))).data().status, 'CANCELLED');
+  assert.equal(
+    (await getDoc(checkRef(alice, 'draft_before_activity'))).exists(),
+    false,
+  );
+
+  await assertFails(updateDoc(activityRef(alice), {
+    name: 'Changed after cancel',
+    updatedAt: later,
+  }));
+  await assertFails(setDoc(
+    checkRef(alice, 'draft_before_activity'),
+    draft('BEFORE_ACTIVITY'),
+  ));
+  await assertFails(trackedAddBatch(
+    alice,
+    'phone',
+    { fromItemIds: ['bottle'], fromRevision: 0 },
+  ).commit());
+});
+
+test('Activity without a draft can be cancelled in either open status', async () => {
+  const alice = client();
+  for (const status of ['UPCOMING', 'ACTIVE']) {
+    await environment.clearFirestore();
+    await seedActivity(status);
+    await assertSucceeds(updateDoc(activityRef(alice), {
+      status: 'CANCELLED',
+      updatedAt: later,
+    }));
+    assert.equal((await getDoc(activityRef(alice))).data().status, 'CANCELLED');
+  }
+});
+
+test('Active Activity cancellation clears Return draft and cannot be repeated', async () => {
+  const alice = client();
+  await seedActivity('ACTIVE');
+  await assertSucceeds(setDoc(
+    checkRef(alice, 'draft_return'),
+    draft('RETURN'),
+  ));
+
+  const cancel = writeBatch(alice);
+  cancel.update(activityRef(alice), {
+    status: 'CANCELLED',
+    updatedAt: later,
+  });
+  cancel.delete(checkRef(alice, 'draft_return'));
+  await assertSucceeds(cancel.commit());
+
+  assert.equal((await getDoc(activityRef(alice))).data().status, 'CANCELLED');
+  assert.equal((await getDoc(checkRef(alice, 'draft_return'))).exists(), false);
+
+  await assertFails(updateDoc(activityRef(alice), {
+    status: 'CANCELLED',
+    updatedAt: later,
+  }));
+  await assertFails(transitionBatch(alice, 'RETURN').commit());
 });
 
 test('Activity Item management follows Activity status and timing', async () => {

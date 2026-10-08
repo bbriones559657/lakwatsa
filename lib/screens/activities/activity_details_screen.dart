@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../../models/activity.dart' as model;
+import '../../models/activity_check_draft.dart';
 import '../../models/activity_item.dart';
 import '../../models/item.dart';
+import '../../repositories/activity_repository.dart';
 import '../../repositories/firestore_activity_repository.dart';
 import '../../services/auth_service.dart';
 import '../lists/add_items_screen.dart';
@@ -11,34 +13,43 @@ import 'activity_return_check_screen.dart';
 import 'activity_check_results_screen.dart';
 import 'edit_activity_screen.dart';
 import '../../theme/app_theme.dart';
+import '../items/item_icon_catalog.dart';
 
 class ActivityDetailsScreen extends StatefulWidget {
   final model.Activity activity;
+  final ActivityRepository? activityRepository;
 
-  const ActivityDetailsScreen({super.key, required this.activity});
+  const ActivityDetailsScreen({
+    super.key,
+    required this.activity,
+    this.activityRepository,
+  });
 
   @override
   State<ActivityDetailsScreen> createState() => _ActivityDetailsScreenState();
 }
 
 class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
-  FirestoreActivityRepository? activityRepository;
+  ActivityRepository? activityRepository;
   Stream<List<ActivityItem>>? activityItemsStream;
   late model.Activity activity;
   bool isManagingItems = false;
+  bool isCancelling = false;
 
   @override
   void initState() {
     super.initState();
     activity = widget.activity;
 
-    final user = AuthService().currentUser;
+    activityRepository = widget.activityRepository;
+    final user = activityRepository == null ? AuthService().currentUser : null;
 
-    if (user != null) {
+    if (activityRepository == null && user != null) {
       activityRepository = FirestoreActivityRepository(userId: user.uid);
-      activityItemsStream = activityRepository!.watchActivityItems(
-        activity.id,
-      );
+    }
+
+    if (activityRepository != null) {
+      activityItemsStream = activityRepository!.watchActivityItems(activity.id);
     }
   }
 
@@ -51,7 +62,9 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
           children: [
             _Header(
               title: activity.name,
-              onEdit: activity.isCompleted ? null : _editActivity,
+              onEdit: activity.isFinished || isCancelling || isManagingItems
+                  ? null
+                  : _editActivity,
             ),
             Expanded(child: _buildContent()),
           ],
@@ -110,10 +123,10 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
                   '${items.length == 1 ? 'item' : 'items'}',
                   style: AppTextStyles.body,
                 ),
-                if (!activity.isCompleted) ...[
+                if (!activity.isFinished) ...[
                   const SizedBox(width: 10),
                   _ItemManagementButton(
-                    enabled: !isManagingItems,
+                    enabled: !isManagingItems && !isCancelling,
                     label: 'Add',
                     icon: Icons.add,
                     onTap: () {
@@ -134,8 +147,10 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
                   padding: const EdgeInsets.only(bottom: 12),
                   child: _ActivityItemCard(
                     item: item,
-                    onRemove: activity.isUpcoming &&
+                    onRemove:
+                        activity.isUpcoming &&
                             !isManagingItems &&
+                            !isCancelling &&
                             items.length > 1
                         ? () {
                             _confirmRemoveItem(item);
@@ -157,18 +172,58 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
 
             const SizedBox(height: 14),
 
-            _ActionButton(
-              activity: activity,
-              onPressed: isManagingItems ? null : _handleAction,
-            ),
+            _buildCheckAction(),
+
+            if (!activity.isFinished) ...[
+              const SizedBox(height: 12),
+              _CancelActivityButton(
+                enabled: !isManagingItems && !isCancelling,
+                isCancelling: isCancelling,
+                onPressed: _cancelActivity,
+              ),
+            ],
           ],
         );
       },
     );
   }
 
+  Widget _buildCheckAction() {
+    if (activity.isCancelled) {
+      return _CancelledActivityNotice(onViewHistory: _handleAction);
+    }
+
+    final checkType = switch (activity.status) {
+      'UPCOMING' => 'BEFORE_ACTIVITY',
+      'ACTIVE' => 'RETURN',
+      _ => null,
+    };
+
+    if (checkType == null || activityRepository == null) {
+      return _ActionButton(
+        activity: activity,
+        hasDraft: false,
+        onPressed: isManagingItems || isCancelling ? null : _handleAction,
+      );
+    }
+
+    return StreamBuilder<ActivityCheckDraft?>(
+      stream: activityRepository!.watchCheckDraft(
+        activityId: activity.id,
+        checkType: checkType,
+      ),
+      builder: (context, snapshot) {
+        return _ActionButton(
+          activity: activity,
+          hasDraft: snapshot.data != null,
+          onPressed: isManagingItems || isCancelling ? null : _handleAction,
+        );
+      },
+    );
+  }
+
   Future<void> _addItems(List<ActivityItem> existingItems) async {
-    if (isManagingItems || activity.isCompleted) {
+    if (isManagingItems || isCancelling || activity.isFinished) {
       return;
     }
 
@@ -183,7 +238,10 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
       ),
     );
 
-    if (!mounted || selectedItems == null || selectedItems.isEmpty) {
+    if (!mounted ||
+        isCancelling ||
+        selectedItems == null ||
+        selectedItems.isEmpty) {
       return;
     }
 
@@ -222,7 +280,7 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
   }
 
   Future<void> _confirmRemoveItem(ActivityItem item) async {
-    if (isManagingItems || !activity.isUpcoming) {
+    if (isManagingItems || isCancelling || !activity.isUpcoming) {
       return;
     }
 
@@ -253,7 +311,7 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
       },
     );
 
-    if (confirmed != true || !mounted) {
+    if (confirmed != true || !mounted || isCancelling) {
       return;
     }
 
@@ -288,13 +346,12 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
   }
 
   void _showMessage(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _editActivity() async {
-    if (activity.isCompleted) {
+    if (activity.isFinished || isCancelling || isManagingItems) {
       return;
     }
 
@@ -316,7 +373,102 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
     });
   }
 
+  Future<void> _cancelActivity() async {
+    if (activity.isFinished ||
+        isCancelling ||
+        isManagingItems ||
+        activityRepository == null) {
+      return;
+    }
+
+    final isActive = activity.isActive;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: AppColors.background,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(6),
+            side: const BorderSide(color: AppColors.ink, width: 2),
+          ),
+          title: Text(
+            'Cancel Activity?',
+            style: AppTextStyles.heading.copyWith(fontSize: 20),
+          ),
+          content: Text(
+            isActive
+                ? 'Cancel "${activity.name}"? The completed Before Check will '
+                      'stay in history, but any Return Check in progress will '
+                      'be discarded.'
+                : 'Cancel "${activity.name}"? It will move to History and '
+                      'can no longer be edited or checked.',
+            style: AppTextStyles.body,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(dialogContext, false);
+              },
+              child: Text('Keep Activity', style: AppTextStyles.bodyBold),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.ink,
+                foregroundColor: AppColors.background,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+              onPressed: () {
+                Navigator.pop(dialogContext, true);
+              },
+              child: const Text('Cancel Activity'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true || !mounted) {
+      return;
+    }
+
+    setState(() {
+      isCancelling = true;
+    });
+
+    try {
+      await activityRepository!.cancelActivity(activity.id);
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        activity = activity.copyWith(
+          status: 'CANCELLED',
+          updatedAt: DateTime.now(),
+        );
+      });
+      _showMessage('Activity cancelled and moved to History.');
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      _showMessage('Failed to cancel Activity: $error');
+    } finally {
+      if (mounted) {
+        setState(() {
+          isCancelling = false;
+        });
+      }
+    }
+  }
+
   Future<void> _handleAction() async {
+    if (isCancelling || isManagingItems) return;
+
     if (activity.status == 'UPCOMING') {
       final completed = await Navigator.push<bool>(
         context,
@@ -558,6 +710,10 @@ class _StatusBadge extends StatelessWidget {
         text = 'DONE';
         break;
 
+      case 'CANCELLED':
+        text = 'CANCELLED';
+        break;
+
       default:
         text = 'UPCOMING';
     }
@@ -565,7 +721,11 @@ class _StatusBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
       decoration: BoxDecoration(
-        color: status == 'ACTIVE' ? AppColors.green : AppColors.background,
+        color: status == 'ACTIVE'
+            ? AppColors.green
+            : status == 'CANCELLED'
+            ? AppColors.orange
+            : AppColors.background,
         border: Border.all(color: AppColors.ink, width: 1.5),
         borderRadius: BorderRadius.circular(3),
       ),
@@ -624,7 +784,7 @@ class _ActivityItemCard extends StatelessWidget {
             ),
             alignment: Alignment.center,
             child: Icon(
-              _getItemIcon(item.icon),
+              itemIconDataForKey(item.icon),
               color: AppColors.ink,
               size: 24,
             ),
@@ -765,11 +925,105 @@ class _ItemManagementButton extends StatelessWidget {
   }
 }
 
+class _CancelledActivityNotice extends StatelessWidget {
+  final VoidCallback onViewHistory;
+
+  const _CancelledActivityNotice({required this.onViewHistory});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        border: Border.all(color: AppColors.ink, width: 2),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.event_busy_outlined, color: AppColors.ink, size: 22),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'This Activity was cancelled. Its Item snapshot and completed '
+                  'check history are kept for reference.',
+                  style: AppTextStyles.body,
+                ),
+                const SizedBox(height: 10),
+                OutlinedButton.icon(
+                  onPressed: onViewHistory,
+                  icon: const Icon(Icons.history, size: 18),
+                  label: const Text('View Check History'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.ink,
+                    side: const BorderSide(color: AppColors.ink, width: 1.5),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CancelActivityButton extends StatelessWidget {
+  final bool enabled;
+  final bool isCancelling;
+  final VoidCallback onPressed;
+
+  const _CancelActivityButton({
+    required this.enabled,
+    required this.isCancelling,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: 'Cancel Activity',
+      child: SizedBox(
+        width: double.infinity,
+        height: 48,
+        child: OutlinedButton.icon(
+          onPressed: enabled ? onPressed : null,
+          icon: const Icon(Icons.event_busy_outlined, size: 19),
+          label: Text(
+            isCancelling ? 'Cancelling...' : 'Cancel Activity',
+            style: AppTextStyles.bodyBold,
+          ),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.ink,
+            side: const BorderSide(color: AppColors.ink, width: 2),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ActionButton extends StatelessWidget {
   final model.Activity activity;
+  final bool hasDraft;
   final VoidCallback? onPressed;
 
-  const _ActionButton({required this.activity, required this.onPressed});
+  const _ActionButton({
+    required this.activity,
+    required this.hasDraft,
+    required this.onPressed,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -777,7 +1031,7 @@ class _ActionButton extends StatelessWidget {
 
     switch (activity.status) {
       case 'ACTIVE':
-        text = 'Check Items Before Going Home';
+        text = hasDraft ? 'Continue Checking' : 'Check Items Before Going Home';
         break;
 
       case 'COMPLETED':
@@ -785,7 +1039,7 @@ class _ActionButton extends StatelessWidget {
         break;
 
       default:
-        text = 'Check Items Before Leaving';
+        text = hasDraft ? 'Continue Checking' : 'Check Items Before Leaving';
     }
 
     final enabled = onPressed != null;
@@ -799,9 +1053,7 @@ class _ActionButton extends StatelessWidget {
           border: Border.all(color: AppColors.ink, width: 2),
           borderRadius: BorderRadius.circular(4),
           boxShadow: enabled
-              ? const [
-                  BoxShadow(color: AppColors.green, offset: Offset(3, 3)),
-                ]
+              ? const [BoxShadow(color: AppColors.green, offset: Offset(3, 3))]
               : null,
         ),
         alignment: Alignment.center,
@@ -826,36 +1078,6 @@ IconData _getActivityIcon(String type) {
       return Icons.today_outlined;
     default:
       return Icons.event_outlined;
-  }
-}
-
-IconData _getItemIcon(String icon) {
-  switch (icon) {
-    case 'electronics':
-      return Icons.devices_outlined;
-    case 'documents':
-      return Icons.description_outlined;
-    case 'clothing':
-      return Icons.checkroom_outlined;
-    case 'toiletries':
-      return Icons.cleaning_services_outlined;
-    case 'laptop':
-      return Icons.laptop_mac;
-    case 'charger':
-      return Icons.battery_charging_full;
-    case 'battery':
-      return Icons.battery_5_bar;
-    case 'passport':
-      return Icons.badge_outlined;
-    case 'id':
-      return Icons.credit_card;
-    case 'jacket':
-    case 'shirt':
-      return Icons.checkroom;
-    case 'toothbrush':
-      return Icons.cleaning_services_outlined;
-    default:
-      return Icons.inventory_2_outlined;
   }
 }
 

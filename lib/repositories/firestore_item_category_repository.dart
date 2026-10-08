@@ -34,8 +34,12 @@ class FirestoreItemCategoryRepository implements ItemCategoryRepository {
   }
 
   @override
-  Future<ItemCategory> addCategory(String value) async {
+  Future<ItemCategory> addCategory(
+    String value, {
+    String iconKey = ItemCategory.defaultIconKey,
+  }) async {
     final name = ItemCategory.validateCustomName(value);
+    final validatedIconKey = ItemCategory.validateIconKey(iconKey);
     final documentId = ItemCategory.documentIdForCustomName(name);
     final document = _categoriesCollection.doc(documentId);
 
@@ -50,17 +54,56 @@ class FirestoreItemCategoryRepository implements ItemCategoryRepository {
       final category = ItemCategory(
         id: documentId,
         name: name,
+        iconKey: validatedIconKey,
         createdAt: now,
         updatedAt: now,
       );
 
       transaction.set(document, {
         'name': category.name,
+        'icon': category.iconKey,
         'createdAt': Timestamp.fromDate(now),
         'updatedAt': Timestamp.fromDate(now),
       });
 
       return category;
+    });
+  }
+
+  @override
+  Future<ItemCategory?> getCategory(String name) async {
+    if (ItemCategory.isBuiltInName(name)) {
+      return null;
+    }
+
+    try {
+      final documentId = ItemCategory.documentIdForCustomName(name);
+      final document = await _categoriesCollection.doc(documentId).get();
+
+      if (!document.exists) {
+        return null;
+      }
+
+      return _categoryFromDocument(document);
+    } on ArgumentError {
+      return null;
+    }
+  }
+
+  @override
+  Future<void> updateCategoryIcon(
+    ItemCategory category,
+    String iconKey,
+  ) async {
+    if (category.isBuiltIn) {
+      throw StateError('Built-in category icons cannot be changed.');
+    }
+
+    final validatedIconKey = ItemCategory.validateIconKey(iconKey);
+
+    await _categoriesCollection.doc(category.id).update({
+      'icon': validatedIconKey,
+      'updatedAt': Timestamp.fromDate(DateTime.now()),
     });
   }
 
@@ -122,6 +165,7 @@ class FirestoreItemCategoryRepository implements ItemCategoryRepository {
     return ItemCategory(
       id: document.id,
       name: data['name'] as String? ?? '',
+      iconKey: data['icon'] as String? ?? ItemCategory.defaultIconKey,
       createdAt: _toDateTime(data['createdAt']),
       updatedAt: _toDateTime(data['updatedAt']),
     );

@@ -24,13 +24,41 @@ class _ActivityItemState {
 class PartialActivityCreationException implements Exception {
   final String activityId;
   final Object cause;
+  final List<Item> missingItems;
 
-  const PartialActivityCreationException(this.activityId, this.cause);
+  PartialActivityCreationException(
+    this.activityId,
+    this.cause, {
+    required List<Item> missingItems,
+  }) : missingItems = List<Item>.unmodifiable(missingItems);
 
   @override
   String toString() =>
-      'Activity $activityId was created, but some Items could not be added. '
-      'Open it to add the remaining Items.';
+      'Activity was created, but ${missingItems.length} '
+      '${missingItems.length == 1 ? 'Item still needs' : 'Items still need'} '
+      'to be added. Retry the missing Items.';
+}
+
+/// Stops at the first failure, preserving the exact unwritten suffix for retry.
+Future<void> writeRemainingActivityItems({
+  required String activityId,
+  required List<Item> items,
+  required Future<void> Function(Item item) writeItem,
+}) async {
+  final uniqueItems = <String, Item>{for (final item in items) item.id: item}
+      .values
+      .toList();
+  for (var index = 0; index < uniqueItems.length; index++) {
+    try {
+      await writeItem(uniqueItems[index]);
+    } catch (error) {
+      throw PartialActivityCreationException(
+        activityId,
+        error,
+        missingItems: uniqueItems.sublist(index),
+      );
+    }
+  }
 }
 
 class FirestoreActivityRepository implements ActivityRepository {
@@ -72,24 +100,20 @@ class FirestoreActivityRepository implements ActivityRepository {
       checkType: checkType,
     ).get();
 
-    final data = document.data();
-    if (data == null) return null;
+    return _activityCheckDraftFromData(document.data());
+  }
 
-    final methods = <String, String>{};
-    final raw = data['foundMethods'];
-    if (raw is Map) {
-      for (final entry in raw.entries) {
-        if (entry.key is String &&
-            (entry.value == 'QR' || entry.value == 'MANUAL')) {
-          methods[entry.key as String] = entry.value as String;
-        }
-      }
-    }
-
-    return ActivityCheckDraft(
-      startedAt: _toDateTime(data['startedAt']) ?? DateTime.now(),
-      foundMethods: methods,
-    );
+  @override
+  Stream<ActivityCheckDraft?> watchCheckDraft({
+    required String activityId,
+    required String checkType,
+  }) {
+    return _draftDocument(
+      activityId: activityId,
+      checkType: checkType,
+    ).snapshots().map((document) {
+      return _activityCheckDraftFromData(document.data());
+    });
   }
 
   @override
@@ -379,6 +403,7 @@ class FirestoreActivityRepository implements ActivityRepository {
   Future<ActivityItem> _addSingleItemToActivity({
     required String activityId,
     required Item item,
+    bool requireUpcoming = false,
   }) async {
     final activityDocument = _activitiesCollection.doc(activityId);
     final itemDocument = _activityItemsCollection(activityId).doc(item.id);
@@ -391,6 +416,11 @@ class FirestoreActivityRepository implements ActivityRepository {
 
       final activityData = activitySnapshot.data();
       final status = activityData?['status'] as String?;
+      if (requireUpcoming && status != 'UPCOMING') {
+        throw StateError(
+          'Activity is no longer UPCOMING. Missing creation Items cannot be added as initial Items.',
+        );
+      }
       final addedDuringActivity = ActivityStatusPolicy.addedDuringActivityFor(
         status,
       );
@@ -556,20 +586,28 @@ class FirestoreActivityRepository implements ActivityRepository {
     );
 
     await batch.commit();
-    if (uniqueItems.length > 1) {
-      try {
-        await addItemsToActivity(
-          activityId: activityDocument.id,
-          items: uniqueItems.skip(1).toList(),
-        );
-      } catch (error) {
-        // The first Item is committed and the Activity remains valid. Surface
-        // the partial result so a retry does not create a duplicate Activity.
-        throw PartialActivityCreationException(activityDocument.id, error);
-      }
-    }
+    await retryActivityCreationItems(
+      activityId: activityDocument.id,
+      items: uniqueItems.skip(1).toList(),
+    );
     return newActivity;
   }
+
+  @override
+  Future<void> retryActivityCreationItems({
+    required String activityId,
+    required List<Item> items,
+  }) => writeRemainingActivityItems(
+    activityId: activityId,
+    items: items,
+    writeItem: (item) async {
+      await _addSingleItemToActivity(
+        activityId: activityId,
+        item: item,
+        requireUpcoming: true,
+      );
+    },
+  );
 
   @override
   Future<void> updateActivity(Activity activity) async {
@@ -606,6 +644,34 @@ class FirestoreActivityRepository implements ActivityRepository {
       }
 
       transaction.update(activityDocument, updates);
+    });
+  }
+
+  @override
+  Future<void> cancelActivity(String activityId) async {
+    final activityDocument = _activitiesCollection.doc(activityId);
+
+    await firestore.runTransaction((transaction) async {
+      final activitySnapshot = await transaction.get(activityDocument);
+      if (!activitySnapshot.exists) {
+        throw StateError('Activity no longer exists.');
+      }
+
+      final currentStatus = activitySnapshot.data()?['status'] as String?;
+      ActivityStatusPolicy.requireCancellation(currentStatus);
+
+      final checkType = currentStatus == 'ACTIVE'
+          ? 'RETURN'
+          : 'BEFORE_ACTIVITY';
+      final now = DateTime.now();
+
+      transaction.update(activityDocument, {
+        'status': 'CANCELLED',
+        'updatedAt': Timestamp.fromDate(now),
+      });
+      transaction.delete(
+        _draftDocument(activityId: activityId, checkType: checkType),
+      );
     });
   }
 
@@ -821,6 +887,26 @@ class FirestoreActivityRepository implements ActivityRepository {
         checkedAt: found ? completedAt : null,
       );
     }).toList();
+  }
+
+  ActivityCheckDraft? _activityCheckDraftFromData(Map<String, dynamic>? data) {
+    if (data == null) return null;
+
+    final methods = <String, String>{};
+    final raw = data['foundMethods'];
+    if (raw is Map) {
+      for (final entry in raw.entries) {
+        if (entry.key is String &&
+            (entry.value == 'QR' || entry.value == 'MANUAL')) {
+          methods[entry.key as String] = entry.value as String;
+        }
+      }
+    }
+
+    return ActivityCheckDraft(
+      startedAt: _toDateTime(data['startedAt']) ?? DateTime.now(),
+      foundMethods: methods,
+    );
   }
 
   List<String>? _stringList(dynamic raw) {

@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 
 import '../../models/activity.dart' as model;
 import '../../repositories/firestore_activity_repository.dart';
+import '../../services/activity_reminder_policy.dart';
+import '../../services/activity_reminder_service.dart';
 import '../../services/auth_service.dart';
 import '../../theme/app_theme.dart';
 
@@ -224,9 +226,7 @@ class _EditActivityScreenState extends State<EditActivityScreen> {
     );
     final firstDate = current.isBefore(today) ? current : today;
     final normalLastDate = DateTime(now.year + 5, 12, 31);
-    final lastDate = current.isAfter(normalLastDate)
-        ? current
-        : normalLastDate;
+    final lastDate = current.isAfter(normalLastDate) ? current : normalLastDate;
 
     final picked = await showDatePicker(
       context: context,
@@ -252,16 +252,17 @@ class _EditActivityScreenState extends State<EditActivityScreen> {
 
   Future<void> _pickEndTime() async {
     if (isSaving) return;
-    final picked = await showTimePicker(
-      context: context,
-      initialTime: endTime,
-    );
+    final picked = await showTimePicker(context: context, initialTime: endTime);
     if (picked != null && mounted) {
       setState(() => endTime = picked);
     }
   }
 
   Future<void> _saveActivity() async {
+    if (isSaving) {
+      return;
+    }
+
     final name = nameController.text.trim();
     if (name.isEmpty) {
       _showMessage('Please enter an activity name.');
@@ -296,7 +297,7 @@ class _EditActivityScreenState extends State<EditActivityScreen> {
       return;
     }
 
-    final updatedActivity = widget.activity.copyWith(
+    var updatedActivity = widget.activity.copyWith(
       name: name,
       type: selectedType,
       activityDate: activityDate,
@@ -306,10 +307,56 @@ class _EditActivityScreenState extends State<EditActivityScreen> {
       reminderMinutes: reminderMinutes,
     );
 
+    final reminderConfigurationChanged =
+        reminderEnabled != widget.activity.reminderEnabled ||
+        reminderMinutes != widget.activity.reminderMinutes ||
+        endAt != widget.activity.endAt;
+    final reminderAt = ActivityReminderPolicy.scheduledAt(
+      updatedActivity,
+      now: DateTime.now(),
+    );
+    String? reminderNotice;
+
+    if (updatedActivity.reminderEnabled &&
+        reminderAt == null &&
+        reminderConfigurationChanged) {
+      updatedActivity = updatedActivity.copyWith(reminderEnabled: false);
+      reminderNotice =
+          'Changes saved, but the reminder was turned off because its time '
+          'has already passed.';
+    }
+
     setState(() => isSaving = true);
+
     try {
+      if (updatedActivity.reminderEnabled &&
+          reminderAt != null &&
+          ActivityReminderService.isSupportedPlatform) {
+        final permissionGranted = await ActivityReminderService.instance
+            .requestPermission();
+
+        if (!mounted) {
+          return;
+        }
+
+        if (!permissionGranted) {
+          updatedActivity = updatedActivity.copyWith(reminderEnabled: false);
+          reminderNotice =
+              'Changes saved, but the reminder was turned off because '
+              'notifications are disabled.';
+        }
+      }
+
       await activityRepository!.updateActivity(updatedActivity);
-      if (!mounted) return;
+
+      if (!mounted) {
+        return;
+      }
+
+      if (reminderNotice != null) {
+        _showMessage(reminderNotice);
+      }
+
       Navigator.pop(
         context,
         updatedActivity.copyWith(updatedAt: DateTime.now()),
@@ -323,9 +370,8 @@ class _EditActivityScreenState extends State<EditActivityScreen> {
   }
 
   void _showMessage(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   InputDecoration _inputDecoration(String? hint) {
@@ -366,11 +412,7 @@ class _ActiveEditNotice extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(
-            Icons.lock_clock_outlined,
-            color: AppColors.ink,
-            size: 20,
-          ),
+          const Icon(Icons.lock_clock_outlined, color: AppColors.ink, size: 20),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
@@ -467,10 +509,7 @@ class _EditLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: AppTextStyles.bodyBold.copyWith(fontSize: 13),
-    );
+    return Text(text, style: AppTextStyles.bodyBold.copyWith(fontSize: 13));
   }
 }
 

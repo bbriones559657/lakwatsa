@@ -4,21 +4,21 @@ import 'package:lakwatsa/models/activity_status_policy.dart';
 void main() {
   test('New Activities must begin UPCOMING', () {
     ActivityStatusPolicy.requireNew('UPCOMING');
-    for (final status in ['ACTIVE', 'COMPLETED', null]) {
+    for (final status in ['ACTIVE', 'COMPLETED', 'CANCELLED', null]) {
       expect(() => ActivityStatusPolicy.requireNew(status), throwsStateError);
     }
   });
 
   test('Before Check is only valid for UPCOMING', () {
     ActivityStatusPolicy.requireBefore('UPCOMING');
-    for (final status in ['ACTIVE', 'COMPLETED', null]) {
+    for (final status in ['ACTIVE', 'COMPLETED', 'CANCELLED', null]) {
       expect(() => ActivityStatusPolicy.requireBefore(status), throwsStateError);
     }
   });
 
   test('Return Check is only valid for ACTIVE', () {
     ActivityStatusPolicy.requireReturn('ACTIVE');
-    for (final status in ['UPCOMING', 'COMPLETED', null]) {
+    for (final status in ['UPCOMING', 'COMPLETED', 'CANCELLED', null]) {
       expect(() => ActivityStatusPolicy.requireReturn(status), throwsStateError);
     }
   });
@@ -49,7 +49,7 @@ void main() {
   test('Items can only be added before Activity completion', () {
     ActivityStatusPolicy.requireEditable('UPCOMING');
     ActivityStatusPolicy.requireEditable('ACTIVE');
-    for (final status in ['COMPLETED', null]) {
+    for (final status in ['COMPLETED', 'CANCELLED', null]) {
       expect(
         () => ActivityStatusPolicy.requireEditable(status),
         throwsStateError,
@@ -66,9 +66,21 @@ void main() {
     );
   });
 
+  test('Activity can only be cancelled while upcoming or active', () {
+    ActivityStatusPolicy.requireCancellation('UPCOMING');
+    ActivityStatusPolicy.requireCancellation('ACTIVE');
+
+    for (final status in ['COMPLETED', 'CANCELLED', null]) {
+      expect(
+        () => ActivityStatusPolicy.requireCancellation(status),
+        throwsStateError,
+      );
+    }
+  });
+
   test('Items can only be removed while the Activity is UPCOMING', () {
     ActivityStatusPolicy.requireItemRemoval('UPCOMING');
-    for (final status in ['ACTIVE', 'COMPLETED', null]) {
+    for (final status in ['ACTIVE', 'COMPLETED', 'CANCELLED', null]) {
       expect(
         () => ActivityStatusPolicy.requireItemRemoval(status),
         throwsStateError,

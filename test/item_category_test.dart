@@ -36,4 +36,18 @@ void main() {
     expect(ItemCategory.sameName('Travel Gear', ' travel gear '), isTrue);
     expect(ItemCategory.sameName('Travel Gear', 'Travel Bags'), isFalse);
   });
+
+  test('custom category icons accept only supported icon keys', () {
+    expect(ItemCategory.validateIconKey('toiletries'), 'toiletries');
+    expect(ItemCategory.validateIconKey(' inventory '), 'inventory');
+    expect(
+      () => ItemCategory.validateIconKey('unknown-icon'),
+      throwsArgumentError,
+    );
+  });
+
+  test('legacy custom categories default to the generic icon', () {
+    const category = ItemCategory(id: 'facial care', name: 'Facial care');
+    expect(category.iconKey, ItemCategory.defaultIconKey);
+  });
 }

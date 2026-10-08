@@ -68,7 +68,7 @@ service cloud.firestore {
         && d.reminderEnabled is bool
         && d.reminderMinutes is int
         && d.reminderMinutes >= 0 && d.reminderMinutes <= 1440
-        && d.status in ['UPCOMING', 'ACTIVE', 'COMPLETED']
+        && d.status in ['UPCOMING', 'ACTIVE', 'COMPLETED', 'CANCELLED']
         && d.createdAt is timestamp && d.updatedAt is timestamp;
     }
     function metadataOnly(changed) {
@@ -166,6 +166,14 @@ service cloud.firestore {
         && completedCheckMatches(uid, activityId, checkId);
     }
 
+    function cancellationDraftCleared(uid, activityId) {
+      let draftId = resource.data.status == 'ACTIVE'
+        ? 'draft_return'
+        : 'draft_before_activity';
+      let draftPath = checkPath(uid, activityId, draftId);
+      return !exists(draftPath) || !existsAfter(draftPath);
+    }
+
     function activityUpdateAllowed(uid, activityId) {
       // Route by status before evaluating unrelated update policies. A check
       // transition must not traverse metadata and Item mutation validators
@@ -179,7 +187,12 @@ service cloud.firestore {
             && completesCheck(uid, activityId, 'before_activity', changed))
           || (resource.data.status == 'ACTIVE'
             && request.resource.data.status == 'COMPLETED'
-            && completesCheck(uid, activityId, 'return', changed)));
+            && completesCheck(uid, activityId, 'return', changed))
+          || (resource.data.status in ['UPCOMING', 'ACTIVE']
+            && request.resource.data.status == 'CANCELLED'
+            && changed.hasOnly(['status', 'updatedAt'])
+            && request.resource.data.updatedAt is timestamp
+            && cancellationDraftCleared(uid, activityId)));
     }
     function validActivityItem(d, itemId) {
       return d.keys().hasAll([
@@ -277,6 +290,16 @@ service cloud.firestore {
         || (checkId == 'draft_return'
           && transitionsWithCheck(uid, activityId, 'return'));
     }
+
+    function draftClearedByCancellation(uid, activityId, checkId) {
+      let beforeParent = get(activityPath(uid, activityId)).data;
+      let afterParent = getAfter(activityPath(uid, activityId)).data;
+      return afterParent.status == 'CANCELLED'
+        && ((checkId == 'draft_before_activity'
+            && beforeParent.status == 'UPCOMING')
+          || (checkId == 'draft_return'
+            && beforeParent.status == 'ACTIVE'));
+    }
     function validCheckResultManifest(uid, activityId, d) {
       let parent = get(activityPath(uid, activityId)).data;
       let allItems = d.itemIds.toSet();
@@ -321,9 +344,30 @@ service cloud.firestore {
         && validCheckResultManifest(uid, activityId, d);
     }
 
+    function validCategoryIcon(icon) {
+      return icon is string && icon in [
+        'inventory', 'star', 'favorite', 'gift', 'bookmark',
+        'electronics', 'laptop', 'phone', 'camera', 'camera_alt',
+        'camera_front', 'camera_rear', 'video_camera', 'headphones',
+        'charger', 'battery', 'cable', 'keyboard', 'mouse', 'watch',
+        'passport', 'id', 'wallet', 'keys', 'luggage', 'backpack',
+        'umbrella', 'map', 'beach', 'clothing', 'toiletries', 'medicine',
+        'first_aid', 'health', 'documents', 'book', 'school', 'work',
+        'notes', 'food', 'drink', 'kitchen', 'home', 'water', 'fitness',
+        'sports', 'pets', 'baby', 'tools', 'flashlight',
+        'tablet', 'desktop', 'speaker', 'earbuds', 'usb', 'gamepad',
+        'calculator', 'pen', 'folder', 'clipboard', 'ticket', 'car',
+        'bicycle', 'plane', 'bus', 'train', 'bed', 'laundry', 'soap',
+        'brush', 'glasses', 'bottle', 'shopping_bag', 'shopping_cart',
+        'coffee', 'camping', 'hiking', 'soccer', 'swimming', 'music',
+        'microphone', 'palette', 'lock', 'money', 'receipt', 'calendar',
+        'clock', 'sun', 'moon', 'plant'
+      ];
+    }
+
     function validCustomItemCategory(d, categoryId) {
-      return d.keys().hasOnly(['name', 'createdAt', 'updatedAt'])
-        && d.keys().hasAll(['name', 'createdAt', 'updatedAt'])
+      return d.keys().hasOnly(['name', 'icon', 'createdAt', 'updatedAt'])
+        && d.keys().hasAll(['name', 'icon', 'createdAt', 'updatedAt'])
         && d.name is string
         && d.name.size() > 0
         && d.name.size() <= 40
@@ -333,9 +377,23 @@ service cloud.firestore {
           'all', 'electronics', 'documents', 'clothing', 'toiletries', 'other'
         ])
         && !(d.name in ['.', '..'])
+        && validCategoryIcon(d.icon)
         && d.createdAt is timestamp
-        && d.updatedAt is timestamp
+        && d.updatedAt is timestamp;
+    }
+
+    function validCustomItemCategoryCreate(d, categoryId) {
+      return validCustomItemCategory(d, categoryId)
         && d.updatedAt == d.createdAt;
+    }
+
+    function validCustomItemCategoryIconUpdate(categoryId) {
+      return validCustomItemCategory(request.resource.data, categoryId)
+        && request.resource.data.name == resource.data.name
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['icon', 'updatedAt'])
+        && request.resource.data.updatedAt >= resource.data.updatedAt;
     }
 
 
@@ -344,9 +402,11 @@ service cloud.firestore {
       match /categories/{categoryId} {
         allow read: if owner(uid);
         allow create: if owner(uid)
-          && validCustomItemCategory(request.resource.data, categoryId);
-        // Category names are immutable because Items store the name snapshot.
-        allow update: if false;
+          && validCustomItemCategoryCreate(request.resource.data, categoryId);
+        // Category names stay immutable because Items store the name snapshot.
+        // Custom category icons may be changed independently.
+        allow update: if owner(uid)
+          && validCustomItemCategoryIconUpdate(categoryId);
         allow delete: if owner(uid);
       }
       match /items/{itemId} {
@@ -399,7 +459,9 @@ service cloud.firestore {
             && validDraft(request.resource.data, checkId)
             && draftStatusMatches(uid, activityId, checkId, request.resource.data);
           // A draft can be removed only as part of a status transition.
-          allow delete: if owner(uid) && draftClearedByCompletion(uid, activityId, checkId);
+          allow delete: if owner(uid)
+            && (draftClearedByCompletion(uid, activityId, checkId)
+              || draftClearedByCancellation(uid, activityId, checkId));
           match /items/{itemId} {
             // Legacy result rows remain readable. New completed checks store the
             // complete, rules-verifiable result manifest on the check document.

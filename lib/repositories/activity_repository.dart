@@ -11,6 +11,11 @@ abstract class ActivityRepository {
     required String checkType,
   });
 
+  Stream<ActivityCheckDraft?> watchCheckDraft({
+    required String activityId,
+    required String checkType,
+  });
+
   Future<void> saveCheckDraft({
     required String activityId,
     required String checkType,
@@ -31,6 +36,13 @@ abstract class ActivityRepository {
     required List<Item> items,
   });
 
+  /// Resume the Item writes for an Activity whose initial creation was partial.
+  /// The Activity must still be UPCOMING; existing Item IDs are safe to retry.
+  Future<void> retryActivityCreationItems({
+    required String activityId,
+    required List<Item> items,
+  });
+
   Future<ActivityItem> addItemToActivity({
     required String activityId,
     required Item item,
@@ -47,6 +59,8 @@ abstract class ActivityRepository {
   });
 
   Future<void> updateActivity(Activity activity);
+
+  Future<void> cancelActivity(String activityId);
 
   Future<void> deleteActivity(String activityId);
 

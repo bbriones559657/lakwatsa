@@ -460,7 +460,7 @@ class _ActivityQrScannerScreenState
                       ),
                     ),
                     child: Text(
-                      '${checkedMethods.length} checked',
+                      '${checkedMethods.length} / ${activityItems.length} checked',
                       style: AppTextStyles
                           .bodyBold
                           .copyWith(

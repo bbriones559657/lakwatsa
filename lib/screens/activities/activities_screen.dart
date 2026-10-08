@@ -6,9 +6,12 @@ import '../../services/auth_service.dart';
 import 'create_activity_screen.dart';
 import 'activity_details_screen.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/lakwatsa_ui.dart';
 
 class ActivitiesScreen extends StatefulWidget {
-  const ActivitiesScreen({super.key});
+  final String initialTab;
+
+  const ActivitiesScreen({super.key, this.initialTab = 'UPCOMING'});
 
   @override
   State<ActivitiesScreen> createState() => _ActivitiesScreenState();
@@ -17,11 +20,12 @@ class ActivitiesScreen extends StatefulWidget {
 class _ActivitiesScreenState extends State<ActivitiesScreen> {
   FirestoreActivityRepository? activityRepository;
 
-  String selectedTab = 'UPCOMING';
+  late String selectedTab;
 
   @override
   void initState() {
     super.initState();
+    selectedTab = widget.initialTab;
 
     final user = AuthService().currentUser;
 
@@ -35,35 +39,44 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
-        child: Column(
+        child: Stack(
           children: [
-            _Header(
-              onAdd: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) {
-                      return const CreateActivityScreen();
-                    },
-                  ),
-                );
-              },
+            const LakwatsaBackgroundDots(),
+            Column(
+              children: [
+                LakwatsaTopBar(
+                  title: 'Activities',
+                  actions: [
+                    LakwatsaHeaderAction(
+                      text: '+',
+                      label: 'Create activity',
+                      filled: true,
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) {
+                              return const CreateActivityScreen();
+                            },
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                _ActivityTabs(
+                  selectedTab: selectedTab,
+                  onChanged: (tab) {
+                    setState(() {
+                      selectedTab = tab;
+                    });
+                  },
+                ),
+                const SizedBox(height: 16),
+                Expanded(child: _buildActivities()),
+              ],
             ),
-
-            const SizedBox(height: 16),
-
-            _ActivityTabs(
-              selectedTab: selectedTab,
-              onChanged: (tab) {
-                setState(() {
-                  selectedTab = tab;
-                });
-              },
-            ),
-
-            const SizedBox(height: 16),
-
-            Expanded(child: _buildActivities()),
           ],
         ),
       ),
@@ -101,6 +114,10 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
         final activities = snapshot.data ?? [];
 
         final filteredActivities = activities.where((activity) {
+          if (selectedTab == 'COMPLETED') {
+            return activity.isCompleted || activity.isCancelled;
+          }
+
           return activity.status == selectedTab;
         }).toList();
 
@@ -137,56 +154,6 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
   }
 }
 
-class _Header extends StatelessWidget {
-  final VoidCallback onAdd;
-
-  const _Header({required this.onAdd});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 70,
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: AppColors.ink, width: 2)),
-      ),
-      child: Row(
-        children: [
-          Text(
-            'Activities',
-            style: AppTextStyles.heading.copyWith(fontSize: 24),
-          ),
-
-          const Spacer(),
-
-          GestureDetector(
-            onTap: onAdd,
-            child: Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                color: AppColors.ink,
-                border: Border.all(color: AppColors.ink, width: 2),
-                borderRadius: BorderRadius.circular(4),
-                boxShadow: const [
-                  BoxShadow(color: AppColors.green, offset: Offset(3, 3)),
-                ],
-              ),
-              alignment: Alignment.center,
-              child: Text(
-                '+',
-                style: AppTextStyles.bodyBold.copyWith(
-                  color: AppColors.background,
-                  fontSize: 20,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 class _ActivityTabs extends StatelessWidget {
   final String selectedTab;
@@ -255,7 +222,7 @@ class _TabButton extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        height: 40,
+        height: AppMetrics.touchTarget,
         decoration: BoxDecoration(
           color: selected ? AppColors.ink : AppColors.background,
           border: Border.all(color: AppColors.ink, width: 2),
@@ -445,6 +412,10 @@ class _StatusBadge extends StatelessWidget {
         text = 'DONE';
         break;
 
+      case 'CANCELLED':
+        text = 'CANCELLED';
+        break;
+
       default:
         text = 'UPCOMING';
     }
@@ -452,7 +423,11 @@ class _StatusBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
       decoration: BoxDecoration(
-        color: status == 'ACTIVE' ? AppColors.green : AppColors.card,
+        color: status == 'ACTIVE'
+            ? AppColors.green
+            : status == 'CANCELLED'
+            ? AppColors.orange
+            : AppColors.card,
         border: Border.all(color: AppColors.ink, width: 1.5),
         borderRadius: BorderRadius.circular(3),
       ),
@@ -487,7 +462,7 @@ class _EmptyState extends StatelessWidget {
 
       case 'COMPLETED':
         title = 'No activity history';
-        message = 'Completed activities will appear here.';
+        message = 'Completed and cancelled activities will appear here.';
         icon = Icons.history;
         break;
 

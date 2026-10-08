@@ -1,17 +1,27 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../models/activity.dart' as model;
 import '../../models/activity_item.dart';
+import '../../repositories/activity_repository.dart';
 import '../../repositories/firestore_activity_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/check_draft_writer.dart';
 import '../../theme/app_theme.dart';
+import 'activity_check_error_text.dart';
+import 'activity_check_exit_dialog.dart';
 import 'activity_qr_scanner_screen.dart';
 
 class ActivityReturnCheckScreen extends StatefulWidget {
   final model.Activity activity;
+  final ActivityRepository? activityRepository;
 
-  const ActivityReturnCheckScreen({super.key, required this.activity});
+  const ActivityReturnCheckScreen({
+    super.key,
+    required this.activity,
+    this.activityRepository,
+  });
 
   @override
   State<ActivityReturnCheckScreen> createState() =>
@@ -19,7 +29,7 @@ class ActivityReturnCheckScreen extends StatefulWidget {
 }
 
 class _ActivityReturnCheckScreenState extends State<ActivityReturnCheckScreen> {
-  FirestoreActivityRepository? activityRepository;
+  ActivityRepository? activityRepository;
 
   // Reuse the Firestore subscription instead of restarting it on every tap.
   Stream<List<ActivityItem>>? _activityItemsStream;
@@ -33,6 +43,10 @@ class _ActivityReturnCheckScreenState extends State<ActivityReturnCheckScreen> {
   Object? _saveError;
 
   bool isSaving = false;
+  bool _isLeaving = false;
+  bool _didPop = false;
+
+  bool get _interactionLocked => isSaving || _isLeaving;
 
   @override
   void initState() {
@@ -40,12 +54,17 @@ class _ActivityReturnCheckScreenState extends State<ActivityReturnCheckScreen> {
 
     checkStartedAt = DateTime.now();
 
-    final user = AuthService().currentUser;
+    activityRepository = widget.activityRepository;
+    final user = activityRepository == null ? AuthService().currentUser : null;
 
-    if (user != null) {
+    if (activityRepository == null && user != null) {
       activityRepository = FirestoreActivityRepository(userId: user.uid);
-      _activityItemsStream =
-          activityRepository!.watchActivityItems(widget.activity.id);
+    }
+
+    if (activityRepository != null) {
+      _activityItemsStream = activityRepository!.watchActivityItems(
+        widget.activity.id,
+      );
       _draftWriter = CheckDraftWriter(
         write: (snapshot) => activityRepository!.saveCheckDraft(
           activityId: widget.activity.id,
@@ -82,6 +101,13 @@ class _ActivityReturnCheckScreenState extends State<ActivityReturnCheckScreen> {
         }
         _loadError = null;
       });
+
+      if (draft == null) {
+        // Opening Return Check starts the session. Persist an empty draft so
+        // Home and Activity Details can offer "Continue Checking" even if
+        // the user leaves before confirming the first Item.
+        _saveDraft();
+      }
     } catch (error) {
       if (mounted) setState(() => _loadError = error);
     } finally {
@@ -95,17 +121,81 @@ class _ActivityReturnCheckScreenState extends State<ActivityReturnCheckScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _Header(activityName: widget.activity.name),
-            Expanded(child: _buildContent()),
-          ],
+    return PopScope<bool>(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) _didPop = true;
+        if (!didPop) _leaveCheck();
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.background,
+        body: SafeArea(
+          child: Column(
+            children: [
+              _Header(activityName: widget.activity.name, onBack: _leaveCheck),
+              Expanded(child: _buildContent()),
+            ],
+          ),
         ),
       ),
     );
+  }
+
+  Future<void> _leaveCheck() async {
+    if (isSaving || _isLeaving || _didPop || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _isLeaving = true;
+    });
+
+    try {
+      while (mounted && !_didPop) {
+        var timedOut = false;
+        try {
+          await _draftWriter?.flush().timeout(const Duration(seconds: 8));
+        } on TimeoutException {
+          timedOut = true;
+        } catch (error) {
+          if (mounted) setState(() => _saveError = error);
+        }
+
+        if (!mounted) return;
+        if (!timedOut && _saveError == null) {
+          _popCheck();
+          return;
+        }
+
+        final decision = await showCheckExitDialog(
+          context,
+          saveError: _saveError,
+          timedOut: timedOut,
+        );
+        if (!mounted) return;
+
+        switch (decision) {
+          case CheckExitDecision.retry:
+            // A timed-out write may still be pending. Only enqueue a new write
+            // after a known failure; otherwise wait for the existing write.
+            if (_saveError != null) _saveDraft();
+            continue;
+          case CheckExitDecision.leaveWithoutSaving:
+            _popCheck();
+            return;
+          case CheckExitDecision.stay:
+            return;
+        }
+      }
+    } finally {
+      if (mounted && !_didPop) setState(() => _isLeaving = false);
+    }
+  }
+
+  void _popCheck([bool? completed]) {
+    if (_didPop || !mounted) return;
+    _didPop = true;
+    Navigator.of(context).pop(completed);
   }
 
   Widget _buildContent() {
@@ -163,7 +253,9 @@ class _ActivityReturnCheckScreenState extends State<ActivityReturnCheckScreen> {
         return Column(
           children: [
             _ProgressSection(
-              found: items.where((item) => foundMethods.containsKey(item.id)).length,
+              found: items
+                  .where((item) => foundMethods.containsKey(item.id))
+                  .length,
               total: items.length,
             ),
 
@@ -172,13 +264,17 @@ class _ActivityReturnCheckScreenState extends State<ActivityReturnCheckScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: Row(
                   children: [
-                    const Expanded(
-                      child: Text('Progress not saved. Check your connection.'),
+                    Expanded(
+                      child: Text(
+                        activityDraftSaveErrorMessage(_saveError!),
+                        style: AppTextStyles.body,
+                      ),
                     ),
-                    TextButton(
-                      onPressed: _saveDraft,
-                      child: const Text('Retry'),
-                    ),
+                    if (!isLegacyActivityMigrationError(_saveError!))
+                      TextButton(
+                        onPressed: _interactionLocked ? null : _saveDraft,
+                        child: const Text('Retry'),
+                      ),
                   ],
                 ),
               ),
@@ -204,9 +300,11 @@ class _ActivityReturnCheckScreenState extends State<ActivityReturnCheckScreen> {
                           child: _CheckItemCard(
                             item: item,
                             found: found,
-                            onTap: () {
-                              _toggleManualItem(item);
-                            },
+                            onTap: _interactionLocked
+                                ? null
+                                : () {
+                                    _toggleManualItem(item);
+                                  },
                           ),
                         );
                       },
@@ -216,7 +314,7 @@ class _ActivityReturnCheckScreenState extends State<ActivityReturnCheckScreen> {
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
               child: GestureDetector(
-                onTap: isSaving
+                onTap: _interactionLocked
                     ? null
                     : () {
                         _openQrScanner(items);
@@ -250,7 +348,7 @@ class _ActivityReturnCheckScreenState extends State<ActivityReturnCheckScreen> {
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
                 child: GestureDetector(
-                  onTap: isSaving
+                  onTap: _interactionLocked
                       ? null
                       : () {
                           _confirmFinish(items);
@@ -258,10 +356,12 @@ class _ActivityReturnCheckScreenState extends State<ActivityReturnCheckScreen> {
                   child: Container(
                     height: 52,
                     decoration: BoxDecoration(
-                      color: isSaving ? AppColors.muted : AppColors.ink,
+                      color: _interactionLocked
+                          ? AppColors.muted
+                          : AppColors.ink,
                       border: Border.all(color: AppColors.ink, width: 2),
                       borderRadius: BorderRadius.circular(4),
-                      boxShadow: isSaving
+                      boxShadow: _interactionLocked
                           ? null
                           : const [
                               BoxShadow(
@@ -272,7 +372,11 @@ class _ActivityReturnCheckScreenState extends State<ActivityReturnCheckScreen> {
                     ),
                     alignment: Alignment.center,
                     child: Text(
-                      isSaving ? 'Saving...' : 'Finish Activity',
+                      isSaving
+                          ? 'Saving...'
+                          : _isLeaving
+                          ? 'Saving draft...'
+                          : 'Finish Activity',
                       style: AppTextStyles.bodyBold.copyWith(
                         color: AppColors.background,
                       ),
@@ -288,6 +392,10 @@ class _ActivityReturnCheckScreenState extends State<ActivityReturnCheckScreen> {
   }
 
   void _toggleManualItem(ActivityItem item) {
+    if (_interactionLocked) {
+      return;
+    }
+
     setState(() {
       if (foundMethods.containsKey(item.id)) {
         foundMethods.remove(item.id);
@@ -299,6 +407,10 @@ class _ActivityReturnCheckScreenState extends State<ActivityReturnCheckScreen> {
   }
 
   Future<void> _openQrScanner(List<ActivityItem> items) async {
+    if (_interactionLocked) {
+      return;
+    }
+
     final result = await Navigator.push<Map<String, String>>(
       context,
       MaterialPageRoute(
@@ -312,7 +424,7 @@ class _ActivityReturnCheckScreenState extends State<ActivityReturnCheckScreen> {
       ),
     );
 
-    if (!mounted || result == null) {
+    if (!mounted || result == null || _interactionLocked) {
       return;
     }
 
@@ -325,8 +437,13 @@ class _ActivityReturnCheckScreenState extends State<ActivityReturnCheckScreen> {
   }
 
   Future<void> _confirmFinish(List<ActivityItem> items) async {
-    final uncheckedCount =
-        items.where((item) => !foundMethods.containsKey(item.id)).length;
+    if (_interactionLocked) {
+      return;
+    }
+
+    final uncheckedCount = items
+        .where((item) => !foundMethods.containsKey(item.id))
+        .length;
 
     final shouldFinish = await showDialog<bool>(
       context: context,
@@ -378,7 +495,7 @@ class _ActivityReturnCheckScreenState extends State<ActivityReturnCheckScreen> {
       },
     );
 
-    if (shouldFinish != true) {
+    if (shouldFinish != true || _interactionLocked) {
       return;
     }
 
@@ -386,9 +503,11 @@ class _ActivityReturnCheckScreenState extends State<ActivityReturnCheckScreen> {
   }
 
   Future<void> _finishReturnCheck(List<ActivityItem> items) async {
-    if (activityRepository == null) {
+    if (_interactionLocked || activityRepository == null) {
       return;
     }
+
+    final methodsSnapshot = Map<String, String>.from(foundMethods);
 
     setState(() {
       isSaving = true;
@@ -401,7 +520,7 @@ class _ActivityReturnCheckScreenState extends State<ActivityReturnCheckScreen> {
       await activityRepository!.completeReturnCheck(
         activityId: widget.activity.id,
         activityItems: items,
-        foundMethods: foundMethods,
+        foundMethods: methodsSnapshot,
         startedAt: checkStartedAt,
       );
 
@@ -412,17 +531,17 @@ class _ActivityReturnCheckScreenState extends State<ActivityReturnCheckScreen> {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('Activity completed.')));
 
-      Navigator.pop(context, true);
+      _popCheck(true);
     } catch (error) {
       if (!mounted) {
         return;
       }
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to finish Activity: $error')),
+        SnackBar(content: Text(activityCheckFinishErrorMessage(error))),
       );
     } finally {
-      if (mounted) {
+      if (mounted && !_didPop) {
         setState(() {
           isSaving = false;
         });
@@ -433,8 +552,9 @@ class _ActivityReturnCheckScreenState extends State<ActivityReturnCheckScreen> {
 
 class _Header extends StatelessWidget {
   final String activityName;
+  final VoidCallback onBack;
 
-  const _Header({required this.activityName});
+  const _Header({required this.activityName, required this.onBack});
 
   @override
   Widget build(BuildContext context) {
@@ -447,9 +567,7 @@ class _Header extends StatelessWidget {
       child: Row(
         children: [
           GestureDetector(
-            onTap: () {
-              Navigator.pop(context);
-            },
+            onTap: onBack,
             child: const SizedBox(
               width: 42,
               height: 42,
@@ -538,7 +656,7 @@ class _ProgressSection extends StatelessWidget {
 class _CheckItemCard extends StatelessWidget {
   final ActivityItem item;
   final bool found;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   const _CheckItemCard({
     required this.item,

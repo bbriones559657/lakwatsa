@@ -10,6 +10,17 @@ class AppColors {
   static const orange = Color(0xFFC4853A);
 }
 
+class AppMetrics {
+  static const pagePadding = 20.0;
+  static const topBarHeight = 56.0;
+  static const bottomNavHeight = 56.0;
+  static const touchTarget = 44.0;
+  static const primaryButtonHeight = 48.0;
+  static const radius = 4.0;
+  static const borderWidth = 2.0;
+  static const strongBorderWidth = 2.5;
+}
+
 class AppTextStyles {
   static final heading = GoogleFonts.plusJakartaSans(
     fontSize: 20,

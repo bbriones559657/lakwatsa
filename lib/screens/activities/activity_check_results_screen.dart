@@ -83,6 +83,7 @@ class _ActivityCheckResultsScreenState
         }
 
         final data = snapshot.data!;
+        final hasHistory = data.beforeCheck != null || data.returnCheck != null;
 
         return ListView(
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 30),
@@ -91,65 +92,63 @@ class _ActivityCheckResultsScreenState
 
             const SizedBox(height: 24),
 
-            _CheckSummary(
-              beforeResults: data.beforeItems,
-              returnResults: data.returnItems,
-            ),
+            if (!hasHistory)
+              const _NoCheckHistoryCard()
+            else ...[
+              _CheckSummary(
+                beforeResults: data.beforeItems,
+                returnResults: data.returnItems,
+              ),
 
-            const SizedBox(height: 24),
+              const SizedBox(height: 24),
 
-            Row(
-              children: [
-                Expanded(
-                  flex: 2,
-                  child: Text(
-                    'ITEM',
-                    style: AppTextStyles.bodyBold.copyWith(fontSize: 11),
+              Row(
+                children: [
+                  Expanded(
+                    flex: 2,
+                    child: Text(
+                      'ITEM',
+                      style: AppTextStyles.bodyBold.copyWith(fontSize: 11),
+                    ),
                   ),
-                ),
-
-                Expanded(
-                  child: Text(
-                    'BEFORE',
-                    textAlign: TextAlign.center,
-                    style: AppTextStyles.bodyBold.copyWith(fontSize: 10),
+                  Expanded(
+                    child: Text(
+                      'BEFORE',
+                      textAlign: TextAlign.center,
+                      style: AppTextStyles.bodyBold.copyWith(fontSize: 10),
+                    ),
                   ),
-                ),
-
-                Expanded(
-                  child: Text(
-                    'RETURN',
-                    textAlign: TextAlign.center,
-                    style: AppTextStyles.bodyBold.copyWith(fontSize: 10),
+                  Expanded(
+                    child: Text(
+                      'RETURN',
+                      textAlign: TextAlign.center,
+                      style: AppTextStyles.bodyBold.copyWith(fontSize: 10),
+                    ),
                   ),
-                ),
-              ],
-            ),
+                ],
+              ),
 
-            const SizedBox(height: 8),
+              const SizedBox(height: 8),
+              Container(height: 2, color: AppColors.ink),
+              const SizedBox(height: 10),
 
-            Container(height: 2, color: AppColors.ink),
+              ...data.activityItems.map((item) {
+                final before = data.beforeItems[item.id];
+                final returned = data.returnItems[item.id];
 
-            const SizedBox(height: 10),
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: _ResultRow(
+                    item: item,
+                    beforeResult: before,
+                    returnResult: returned,
+                  ),
+                );
+              }),
 
-            ...data.activityItems.map((item) {
-              final before = data.beforeItems[item.id];
-
-              final returned = data.returnItems[item.id];
-
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: _ResultRow(
-                  item: item,
-                  beforeResult: before,
-                  returnResult: returned,
-                ),
-              );
-            }),
-
-            const SizedBox(height: 14),
-
-            _LegendCard(),
+              const SizedBox(height: 14),
+              _LegendCard(),
+            ],
           ],
         );
       },
@@ -227,6 +226,10 @@ class _ActivitySummary extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isCancelled = activity.isCancelled;
+    final statusText = isCancelled ? 'CANCELLED' : 'DONE';
+    final statusColor = isCancelled ? AppColors.orange : AppColors.green;
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -283,16 +286,45 @@ class _ActivitySummary extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
             decoration: BoxDecoration(
-              color: AppColors.green,
+              color: statusColor,
               border: Border.all(color: AppColors.ink, width: 1.5),
               borderRadius: BorderRadius.circular(3),
             ),
             child: Text(
-              'DONE',
+              statusText,
               style: AppTextStyles.bodyBold.copyWith(
-                color: AppColors.background,
+                color: isCancelled ? AppColors.ink : AppColors.background,
                 fontSize: 9,
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NoCheckHistoryCard extends StatelessWidget {
+  const _NoCheckHistoryCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        border: Border.all(color: AppColors.ink, width: 1.5),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.history_toggle_off, color: AppColors.ink, size: 22),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'No completed checks were recorded for this Activity.',
+              style: AppTextStyles.body,
             ),
           ),
         ],

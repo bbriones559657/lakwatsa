@@ -1,5 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 
+import 'activity_reminder_service.dart';
+
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
@@ -32,6 +34,10 @@ class AuthService {
   }
 
   Future<void> signOut() async {
-    await _auth.signOut();
+    try {
+      await ActivityReminderService.instance.cancelAllActivityReminders();
+    } finally {
+      await _auth.signOut();
+    }
   }
 }

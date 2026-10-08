@@ -6,7 +6,9 @@ import '../../repositories/firestore_item_category_repository.dart';
 import '../../repositories/firestore_item_repository.dart';
 import '../../services/auth_service.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/lakwatsa_ui.dart';
 import 'add_item_screen.dart';
+import 'bulk_qr_export_screen.dart';
 import 'manage_categories_screen.dart';
 
 class MyItemsScreen extends StatefulWidget {
@@ -46,16 +48,30 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
   Widget build(BuildContext context) {
     return Stack(
       children: [
-        const _BackgroundDots(),
+        const LakwatsaBackgroundDots(),
         Column(
           children: [
-            const _StatusBar(),
-
-            _Header(
-              onAdd: _openAddItem,
-              onCategories: _openCategories,
+            LakwatsaTopBar(
+              title: 'My Items',
+              actions: [
+                LakwatsaHeaderAction(
+                  icon: Icons.qr_code_2,
+                  label: 'Export QR labels',
+                  onPressed: _openBulkQrExport,
+                ),
+                LakwatsaHeaderAction(
+                  icon: Icons.category_outlined,
+                  label: 'Manage categories',
+                  onPressed: _openCategories,
+                ),
+                LakwatsaHeaderAction(
+                  text: '+',
+                  label: 'Add item',
+                  filled: true,
+                  onPressed: _openAddItem,
+                ),
+              ],
             ),
-
             Expanded(child: _buildContent()),
           ],
         ),
@@ -118,8 +134,10 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
             return ListView(
               padding: const EdgeInsets.only(bottom: 24),
               children: [
-                _SearchBar(
+                LakwatsaSearchField(
                   controller: searchController,
+                  hintText: 'Search items...',
+                  margin: const EdgeInsets.fromLTRB(20, 12, 20, 12),
                   onChanged: (_) {
                     setState(() {});
                   },
@@ -175,17 +193,19 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
     List<Item> items,
   ) {
     final names = <String>['All', ...ItemCategory.builtInNames];
-    final customNames = customCategories
-        .map((category) => category.name.trim())
-        .where((name) => name.isNotEmpty)
-        .toList()
-      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-    final legacyNames = items
-        .map((item) => item.category.trim())
-        .where((name) => name.isNotEmpty)
-        .toSet()
-        .toList()
-      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    final customNames =
+        customCategories
+            .map((category) => category.name.trim())
+            .where((name) => name.isNotEmpty)
+            .toList()
+          ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    final legacyNames =
+        items
+            .map((item) => item.category.trim())
+            .where((name) => name.isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
 
     for (final name in [...customNames, ...legacyNames]) {
       if (!names.any((existing) => ItemCategory.sameName(existing, name))) {
@@ -203,7 +223,8 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
       final matchesSearch =
           search.isEmpty || item.name.toLowerCase().contains(search);
 
-      final matchesCategory = activeCategory == 'All' ||
+      final matchesCategory =
+          activeCategory == 'All' ||
           ItemCategory.sameName(item.category, activeCategory);
 
       return matchesSearch && matchesCategory;
@@ -232,6 +253,13 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
     return widgets;
   }
 
+  Future<void> _openBulkQrExport() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const BulkQrExportScreen()),
+    );
+  }
+
   Future<void> _openAddItem() async {
     await Navigator.push(
       context,
@@ -245,204 +273,7 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
   Future<void> _openCategories() async {
     await Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (context) => const ManageCategoriesScreen(),
-      ),
-    );
-  }
-}
-
-class _BackgroundDots extends StatelessWidget {
-  const _BackgroundDots();
-
-  static const dots = [
-    Offset(30, 95),
-    Offset(325, 130),
-    Offset(35, 310),
-    Offset(328, 290),
-    Offset(32, 530),
-    Offset(330, 510),
-    Offset(65, 670),
-    Offset(295, 680),
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    return IgnorePointer(
-      child: Stack(
-        children: dots.map((position) {
-          return Positioned(
-            left: position.dx,
-            top: position.dy,
-            child: Container(
-              width: 4,
-              height: 4,
-              color: AppColors.ink.withValues(alpha: .05),
-            ),
-          );
-        }).toList(),
-      ),
-    );
-  }
-}
-
-class _StatusBar extends StatelessWidget {
-  const _StatusBar();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 28,
-      color: AppColors.ink,
-      padding: const EdgeInsets.only(left: 16),
-      alignment: Alignment.centerLeft,
-      child: Text(
-        '9:41',
-        style: AppTextStyles.pixelWhite.copyWith(
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-    );
-  }
-}
-
-class _Header extends StatelessWidget {
-  final VoidCallback onAdd;
-  final VoidCallback onCategories;
-
-  const _Header({
-    required this.onAdd,
-    required this.onCategories,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 56,
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      decoration: const BoxDecoration(
-        color: AppColors.background,
-        border: Border(bottom: BorderSide(color: AppColors.ink, width: 2)),
-      ),
-      child: Row(
-        children: [
-          Text('My Items', style: AppTextStyles.heading),
-
-          const Spacer(),
-
-          _HeaderButton(
-            icon: Icons.category_outlined,
-            label: 'Manage categories',
-            filled: false,
-            onTap: onCategories,
-          ),
-
-          const SizedBox(width: 10),
-
-          _HeaderButton(
-            text: '+',
-            label: 'Add item',
-            filled: true,
-            onTap: onAdd,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _HeaderButton extends StatelessWidget {
-  final String? text;
-  final IconData? icon;
-  final String label;
-  final bool filled;
-  final VoidCallback onTap;
-
-  const _HeaderButton({
-    this.text,
-    this.icon,
-    required this.label,
-    required this.filled,
-    required this.onTap,
-  }) : assert(text != null || icon != null);
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: label,
-      child: Semantics(
-        button: true,
-        label: label,
-        child: GestureDetector(
-          onTap: onTap,
-          child: Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: filled ? AppColors.ink : AppColors.background,
-              border: Border.all(color: AppColors.ink, width: 2.5),
-              borderRadius: BorderRadius.circular(4),
-              boxShadow: filled
-                  ? const [
-                      BoxShadow(color: AppColors.green, offset: Offset(3, 3)),
-                    ]
-                  : null,
-            ),
-            alignment: Alignment.center,
-            child: icon != null
-                ? Icon(
-                    icon,
-                    color: filled ? AppColors.background : AppColors.ink,
-                    size: 19,
-                  )
-                : Text(
-                    text!,
-                    style: AppTextStyles.bodyBold.copyWith(
-                      color: filled ? AppColors.background : AppColors.ink,
-                      fontSize: text == '+' ? 20 : 14,
-                    ),
-                  ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SearchBar extends StatelessWidget {
-  final TextEditingController controller;
-  final ValueChanged<String> onChanged;
-
-  const _SearchBar({required this.controller, required this.onChanged});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(20, 12, 20, 12),
-      decoration: BoxDecoration(
-        color: AppColors.background,
-        border: Border.all(color: AppColors.ink, width: 2),
-        borderRadius: BorderRadius.circular(4),
-        boxShadow: const [
-          BoxShadow(color: AppColors.ink, offset: Offset(3, 3)),
-        ],
-      ),
-      child: TextField(
-        controller: controller,
-        onChanged: onChanged,
-        style: AppTextStyles.body.copyWith(fontSize: 13),
-        decoration: InputDecoration(
-          hintText: 'Search items...',
-          hintStyle: AppTextStyles.body.copyWith(
-            fontSize: 13,
-            color: AppColors.muted,
-          ),
-          prefixIcon: const Icon(Icons.search, color: AppColors.ink, size: 20),
-          border: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(vertical: 13),
-        ),
-      ),
+      MaterialPageRoute(builder: (context) => const ManageCategoriesScreen()),
     );
   }
 }
@@ -502,23 +333,33 @@ class _CategoryChip extends StatelessWidget {
       button: true,
       selected: selected,
       label: 'Filter by $text',
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14),
-          decoration: BoxDecoration(
-            color: selected ? AppColors.ink : AppColors.background,
-            border: Border.all(color: AppColors.ink, width: 2),
-            borderRadius: BorderRadius.circular(18),
-          ),
-          alignment: Alignment.center,
-          child: Text(
-            text,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: AppTextStyles.bodyBold.copyWith(
-              fontSize: 11,
-              color: selected ? AppColors.background : AppColors.ink,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: SizedBox(
+            height: AppMetrics.touchTarget,
+            child: Center(
+              child: Container(
+                height: 28,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                decoration: BoxDecoration(
+                  color: selected ? AppColors.ink : AppColors.background,
+                  border: Border.all(color: AppColors.ink, width: 2),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  text,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTextStyles.bodyBold.copyWith(
+                    fontSize: 11,
+                    color: selected ? AppColors.background : AppColors.ink,
+                  ),
+                ),
+              ),
             ),
           ),
         ),
@@ -602,10 +443,11 @@ class _ItemCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
+    return Semantics(
+      button: true,
+      label: 'Edit ${item.name}',
       child: Container(
-        height: 76,
+        height: 72,
         decoration: BoxDecoration(
           color: AppColors.background,
           border: Border.all(color: AppColors.ink, width: 2.5),
@@ -614,78 +456,88 @@ class _ItemCard extends StatelessWidget {
             BoxShadow(color: AppColors.ink, offset: Offset(4, 4)),
           ],
         ),
-        child: Row(
-          children: [
-            const SizedBox(width: 10),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(4),
+            child: Row(
+              children: [
+                const SizedBox(width: 10),
 
-            Container(
-              width: 4,
-              height: 64,
-              decoration: BoxDecoration(
-                color: item.hasQr ? AppColors.orange : AppColors.muted,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-
-            const SizedBox(width: 10),
-
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: AppColors.card,
-                border: Border.all(color: AppColors.ink, width: 1.5),
-                borderRadius: BorderRadius.circular(3),
-              ),
-              alignment: Alignment.center,
-              child: Icon(
-                _getItemIcon(item.icon),
-                color: AppColors.ink,
-                size: 23,
-              ),
-            ),
-
-            const SizedBox(width: 12),
-
-            Expanded(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    item.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppTextStyles.bodyBold.copyWith(fontSize: 14),
+                Container(
+                  width: 4,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    color: item.hasQr ? AppColors.orange : AppColors.muted,
+                    borderRadius: BorderRadius.circular(2),
                   ),
-
-                  const SizedBox(height: 4),
-
-                  Text(
-                    '${item.category} • Qty ${item.quantity}',
-                    style: AppTextStyles.body.copyWith(fontSize: 11),
-                  ),
-                ],
-              ),
-            ),
-
-            Container(
-              margin: const EdgeInsets.only(right: 14),
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-              decoration: BoxDecoration(
-                color: item.hasQr ? AppColors.green : AppColors.card,
-                border: Border.all(color: AppColors.ink, width: 1.5),
-                borderRadius: BorderRadius.circular(2),
-              ),
-              child: Text(
-                item.hasQr ? 'QR' : 'NO QR',
-                style: AppTextStyles.pixelDark.copyWith(
-                  color: item.hasQr ? AppColors.background : AppColors.ink,
-                  fontSize: 5,
                 ),
-              ),
+
+                const SizedBox(width: 10),
+
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: AppColors.card,
+                    border: Border.all(color: AppColors.ink, width: 1.5),
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                  alignment: Alignment.center,
+                  child: Icon(
+                    _getItemIcon(item.icon),
+                    color: AppColors.ink,
+                    size: 23,
+                  ),
+                ),
+
+                const SizedBox(width: 12),
+
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        item.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTextStyles.bodyBold.copyWith(fontSize: 14),
+                      ),
+
+                      const SizedBox(height: 4),
+
+                      Text(
+                        '${item.category} • Qty ${item.quantity}',
+                        style: AppTextStyles.body.copyWith(fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+
+                Container(
+                  margin: const EdgeInsets.only(right: 14),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: item.hasQr ? AppColors.green : AppColors.card,
+                    border: Border.all(color: AppColors.ink, width: 1.5),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                  child: Text(
+                    item.hasQr ? 'QR' : 'NO QR',
+                    style: AppTextStyles.pixelDark.copyWith(
+                      color: item.hasQr ? AppColors.background : AppColors.ink,
+                      fontSize: 5,
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );

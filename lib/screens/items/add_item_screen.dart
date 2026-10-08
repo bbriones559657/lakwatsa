@@ -9,14 +9,18 @@ import '../../repositories/firestore_item_repository.dart';
 import '../../repositories/firestore_list_repository.dart';
 import '../../services/auth_service.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/lakwatsa_ui.dart';
 import '../lists/list_details_screen.dart';
+import '../lists/list_icon_catalog.dart';
+import 'item_icon_catalog.dart';
 import 'item_qr_screen.dart';
 import 'manage_categories_screen.dart';
 
 class AddItemScreen extends StatefulWidget {
   final Item? item;
+  final bool returnSavedItem;
 
-  const AddItemScreen({super.key, this.item});
+  const AddItemScreen({super.key, this.item, this.returnSavedItem = false});
 
   bool get isEditing => item != null;
 
@@ -30,6 +34,9 @@ class _AddItemScreenState extends State<AddItemScreen> {
   FirestoreItemCategoryRepository? categoryRepository;
 
   String selectedCategory = 'Electronics';
+  String selectedIconKey = 'electronics';
+  String selectedCategoryDefaultIconKey = 'electronics';
+  bool iconManuallySelected = false;
 
   int quantity = 1;
 
@@ -50,14 +57,27 @@ class _AddItemScreenState extends State<AddItemScreen> {
     if (item != null) {
       itemNameController.text = item.name;
       selectedCategory = item.category;
+      selectedCategoryDefaultIconKey = defaultItemIconKeyForCategory(
+        item.category,
+      );
+      selectedIconKey = item.icon.isEmpty
+          ? selectedCategoryDefaultIconKey
+          : item.icon;
+      iconManuallySelected = selectedIconKey != selectedCategoryDefaultIconKey;
       quantity = item.quantity;
       hasQrCode = item.hasQr;
+    } else {
+      selectedCategoryDefaultIconKey = defaultItemIconKeyForCategory(
+        selectedCategory,
+      );
+      selectedIconKey = selectedCategoryDefaultIconKey;
     }
 
     final user = AuthService().currentUser;
 
     if (user != null) {
       categoryRepository = FirestoreItemCategoryRepository(userId: user.uid);
+      _syncSelectedCategoryDefaultIcon();
     }
   }
 
@@ -70,10 +90,37 @@ class _AddItemScreenState extends State<AddItemScreen> {
   Future<void> _openCategoryManager() async {
     await Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (context) => const ManageCategoriesScreen(),
-      ),
+      MaterialPageRoute(builder: (context) => const ManageCategoriesScreen()),
     );
+
+    await _syncSelectedCategoryDefaultIcon();
+  }
+
+  Future<String> _resolveCategoryDefaultIconKey(String category) async {
+    if (ItemCategory.isBuiltInName(category)) {
+      return defaultItemIconKeyForCategory(category);
+    }
+
+    final customCategory = await categoryRepository?.getCategory(category);
+    return customCategory?.iconKey ?? ItemCategory.defaultIconKey;
+  }
+
+  Future<void> _syncSelectedCategoryDefaultIcon() async {
+    final category = selectedCategory;
+    final defaultIconKey = await _resolveCategoryDefaultIconKey(category);
+
+    if (!mounted || selectedCategory != category) return;
+
+    setState(() {
+      final wasFollowingCategory = !iconManuallySelected;
+      selectedCategoryDefaultIconKey = defaultIconKey;
+
+      if (currentItem != null) {
+        iconManuallySelected = selectedIconKey != defaultIconKey;
+      } else if (wasFollowingCategory) {
+        selectedIconKey = defaultIconKey;
+      }
+    });
   }
 
   Future<bool> _selectedCategoryIsAvailable(String category) async {
@@ -127,6 +174,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
     // makes the save single-flight even when category validation needs a read.
     final category = selectedCategory;
     final itemQuantity = quantity;
+    final itemIconKey = selectedIconKey;
     final createQrCode = hasQrCode;
 
     setState(() {
@@ -151,6 +199,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
       }
 
       final repository = FirestoreItemRepository(userId: user.uid);
+      Item? savedItem;
 
       if (widget.isEditing) {
         final oldItem = currentItem;
@@ -164,9 +213,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
           name: itemName,
           category: category,
           quantity: itemQuantity,
-          icon: category == oldItem.category
-              ? oldItem.icon
-              : _getIconKey(category),
+          icon: itemIconKey,
           photoUrl: oldItem.photoUrl,
 
           // Important:
@@ -181,20 +228,24 @@ class _AddItemScreenState extends State<AddItemScreen> {
         await repository.updateItem(updatedItem);
 
         currentItem = updatedItem;
+        savedItem = updatedItem;
       } else {
         final newItem = Item(
           id: '',
           name: itemName,
           category: category,
           quantity: itemQuantity,
-          icon: _getIconKey(category),
+          icon: itemIconKey,
 
           // The toggle is only used while
           // creating a new item.
           qrCode: createQrCode ? 'lakwatsa:item:${const Uuid().v4()}' : null,
         );
 
-        await repository.addItem(newItem);
+        final createdItem = await repository.addItem(newItem);
+
+        currentItem = createdItem;
+        savedItem = createdItem;
       }
 
       if (!mounted) {
@@ -211,7 +262,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
         ),
       );
 
-      Navigator.pop(context);
+      Navigator.pop(context, widget.returnSavedItem ? savedItem : null);
     } catch (error) {
       if (!mounted) {
         return;
@@ -251,24 +302,48 @@ class _AddItemScreenState extends State<AddItemScreen> {
       ),
     );
 
-    final user = AuthService().currentUser;
-
-    if (user == null) {
+    if (!mounted) {
       return;
     }
 
-    final repository = FirestoreItemRepository(userId: user.uid);
+    try {
+      final user = AuthService().currentUser;
 
-    final refreshedItem = await repository.getItem(item.id);
+      if (user == null) {
+        return;
+      }
 
-    if (!mounted || refreshedItem == null) {
-      return;
+      final repository = FirestoreItemRepository(userId: user.uid);
+      final refreshedItem = await repository.getItem(item.id);
+
+      if (!mounted) {
+        return;
+      }
+
+      if (refreshedItem == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('This Item is no longer available.')),
+        );
+        return;
+      }
+
+      setState(() {
+        currentItem = refreshedItem;
+        hasQrCode = refreshedItem.hasQr;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Could not refresh this Item. Check your connection and try again.',
+          ),
+        ),
+      );
     }
-
-    setState(() {
-      currentItem = refreshedItem;
-      hasQrCode = refreshedItem.hasQr;
-    });
   }
 
   Future<void> _deleteItem() async {
@@ -449,6 +524,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
                               return ListDetailsScreen(
                                 listId: list.id,
                                 listName: list.name,
+                                listIcon: list.icon,
                               );
                             },
                           ),
@@ -464,8 +540,8 @@ class _AddItemScreenState extends State<AddItemScreen> {
                         ),
                         child: Row(
                           children: [
-                            const Icon(
-                              Icons.list_alt_outlined,
+                            Icon(
+                              listIconDataForKey(list.icon),
                               color: AppColors.ink,
                               size: 20,
                             ),
@@ -569,11 +645,12 @@ class _AddItemScreenState extends State<AddItemScreen> {
 
   List<String> _categoryNames(List<ItemCategory> customCategories) {
     final names = <String>[...ItemCategory.builtInNames];
-    final customNames = customCategories
-        .map((category) => category.name.trim())
-        .where((name) => name.isNotEmpty)
-        .toList()
-      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    final customNames =
+        customCategories
+            .map((category) => category.name.trim())
+            .where((name) => name.isNotEmpty)
+            .toList()
+          ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
 
     for (final name in customNames) {
       if (!_containsCategoryName(names, name)) {
@@ -613,285 +690,223 @@ class _AddItemScreenState extends State<AddItemScreen> {
     return names.any((name) => name.trim().toLowerCase() == normalized);
   }
 
-  void _selectCategory(String value) {
+  Future<void> _selectCategory(String value) async {
+    final shouldFollowCategory = !iconManuallySelected;
+
     setState(() {
       selectedCategory = value;
+      selectedCategoryDefaultIconKey = defaultItemIconKeyForCategory(value);
+
+      if (shouldFollowCategory) {
+        selectedIconKey = selectedCategoryDefaultIconKey;
+      }
+    });
+
+    final defaultIconKey = await _resolveCategoryDefaultIconKey(value);
+    if (!mounted || selectedCategory != value) return;
+
+    setState(() {
+      selectedCategoryDefaultIconKey = defaultIconKey;
+      if (!iconManuallySelected) {
+        selectedIconKey = defaultIconKey;
+      }
     });
   }
 
-  String _getIconKey(String category) {
-    switch (category) {
-      case 'Electronics':
-        return 'electronics';
-
-      case 'Documents':
-        return 'documents';
-
-      case 'Clothing':
-        return 'clothing';
-
-      case 'Toiletries':
-        return 'toiletries';
-
-      default:
-        return 'inventory';
+  Future<void> _openIconPicker() async {
+    if (isSaving || isDeleting) {
+      return;
     }
+
+    final defaultIconKey = await _resolveCategoryDefaultIconKey(
+      selectedCategory,
+    );
+
+    if (!mounted) return;
+
+    selectedCategoryDefaultIconKey = defaultIconKey;
+
+    final result = await showModalBottomSheet<_IconPickerResult>(
+      context: context,
+      useSafeArea: true,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return _ItemIconPickerSheet(
+          selectedIconKey: selectedIconKey,
+          defaultIconKey: selectedCategoryDefaultIconKey,
+          category: selectedCategory,
+        );
+      },
+    );
+
+    if (!mounted || result == null) {
+      return;
+    }
+
+    setState(() {
+      selectedIconKey = result.iconKey;
+      iconManuallySelected = !result.followCategory;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
+    final itemIcon = itemIconDataForKey(selectedIconKey);
+
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
-        child: Column(
+        child: Stack(
           children: [
-            _TopBar(title: widget.isEditing ? 'Edit Item' : 'New Item'),
-
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      widget.isEditing ? 'Edit Item' : 'Add Item',
-                      style: AppTextStyles.heading.copyWith(fontSize: 24),
-                    ),
-
-                    const SizedBox(height: 22),
-
-                    const _FieldLabel('Item Name'),
-
-                    const SizedBox(height: 7),
-
-                    _TextField(
-                      controller: itemNameController,
-                      hintText: 'Enter item name',
-                    ),
-
-                    const SizedBox(height: 18),
-
-                    Row(
+            const LakwatsaBackgroundDots(),
+            Column(
+              children: [
+                _TopBar(title: widget.isEditing ? 'Edit Item' : 'Add Item'),
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const _FieldLabel('Category'),
-                        const Spacer(),
-                        TextButton(
-                          onPressed: _openCategoryManager,
-                          style: TextButton.styleFrom(
-                            minimumSize: const Size(48, 40),
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                            foregroundColor: AppColors.green,
-                          ),
-                          child: Text(
-                            'Manage',
-                            style: AppTextStyles.bodyBold.copyWith(fontSize: 12),
-                          ),
+                        const _FieldLabel('ITEM NAME'),
+                        const SizedBox(height: 8),
+                        _TextField(
+                          controller: itemNameController,
+                          hintText: 'Enter item name',
                         ),
-                      ],
-                    ),
-
-                    const SizedBox(height: 7),
-
-                    _buildCategoryDropdown(),
-
-                    const SizedBox(height: 18),
-
-                    const _FieldLabel('Quantity'),
-
-                    const SizedBox(height: 7),
-
-                    _QuantitySelector(
-                      quantity: quantity,
-                      onDecrease: () {
-                        if (quantity > 1) {
-                          setState(() {
-                            quantity--;
-                          });
-                        }
-                      },
-                      onIncrease: () {
-                        setState(() {
-                          quantity++;
-                        });
-                      },
-                    ),
-
-                    const SizedBox(height: 22),
-
-                    const _FieldLabel('Item Icon'),
-
-                    const SizedBox(height: 7),
-
-                    const _IconPreview(),
-
-                    const SizedBox(height: 18),
-
-                    const _FieldLabel('Photo'),
-
-                    const SizedBox(height: 7),
-
-                    const _PhotoButton(),
-
-                    // QR toggle only appears
-                    // while creating a NEW item.
-                    if (!widget.isEditing) ...[
-                      const SizedBox(height: 22),
-
-                      _QrSection(
-                        hasQrCode: hasQrCode,
-                        onChanged: (value) {
-                          setState(() {
-                            hasQrCode = value;
-                          });
-                        },
-                      ),
-                    ],
-
-                    const SizedBox(height: 28),
-
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _ActionButton(
-                            text: 'Cancel',
-                            filled: false,
-                            onPressed: () {
-                              Navigator.pop(context);
-                            },
-                          ),
-                        ),
-
-                        const SizedBox(width: 12),
-
-                        Expanded(
-                          child: _ActionButton(
-                            text: isSaving
-                                ? 'Saving...'
-                                : widget.isEditing
-                                ? 'Save Changes'
-                                : 'Save Item',
-                            filled: true,
-                            onPressed: isSaving || isDeleting
-                                ? () {}
-                                : _saveItem,
-                          ),
-                        ),
-                      ],
-                    ),
-
-                    // QR management for an
-                    // EXISTING item.
-                    if (widget.isEditing) ...[
-                      const SizedBox(height: 18),
-
-                      Container(
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: AppColors.card,
-                          border: Border.all(color: AppColors.ink, width: 2),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                        const SizedBox(height: 18),
+                        Row(
                           children: [
-                            Row(
-                              children: [
-                                const Icon(
-                                  Icons.qr_code_2,
-                                  color: AppColors.ink,
-                                  size: 28,
+                            const _FieldLabel('CATEGORY'),
+                            const Spacer(),
+                            TextButton(
+                              onPressed: isSaving ? null : _openCategoryManager,
+                              style: TextButton.styleFrom(
+                                minimumSize: const Size(56, 44),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
                                 ),
-
-                                const SizedBox(width: 12),
-
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        'QR Code',
-                                        style: AppTextStyles.bodyBold,
-                                      ),
-
-                                      const SizedBox(height: 3),
-
-                                      Text(
-                                        currentItem?.hasQr == true
-                                            ? 'QR code assigned to this item.'
-                                            : 'No QR code assigned.',
-                                        style: AppTextStyles.body,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-
-                                if (currentItem?.hasQr == true)
-                                  const Icon(
-                                    Icons.check_circle,
-                                    color: AppColors.green,
-                                    size: 24,
-                                  ),
-                              ],
-                            ),
-
-                            const SizedBox(height: 14),
-
-                            GestureDetector(
-                              onTap: _openQrScreen,
-                              child: Container(
-                                width: double.infinity,
-                                height: 46,
-                                decoration: BoxDecoration(
-                                  color: currentItem?.hasQr == true
-                                      ? AppColors.background
-                                      : AppColors.ink,
-                                  border: Border.all(
-                                    color: AppColors.ink,
-                                    width: 2,
-                                  ),
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                alignment: Alignment.center,
-                                child: Text(
-                                  currentItem?.hasQr == true
-                                      ? 'View QR Code'
-                                      : 'Generate QR Code',
-                                  style: AppTextStyles.bodyBold.copyWith(
-                                    color: currentItem?.hasQr == true
-                                        ? AppColors.ink
-                                        : AppColors.background,
-                                  ),
+                                foregroundColor: AppColors.green,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              child: Text(
+                                'Manage',
+                                style: AppTextStyles.bodyBold.copyWith(
+                                  fontSize: 12,
                                 ),
                               ),
                             ),
                           ],
                         ),
-                      ),
-
-                      const SizedBox(height: 18),
-
-                      GestureDetector(
-                        onTap: isDeleting || isSaving ? null : _confirmDelete,
-                        child: Container(
-                          width: double.infinity,
-                          height: 48,
-                          decoration: BoxDecoration(
-                            color: AppColors.background,
-                            border: Border.all(color: AppColors.ink, width: 2),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          alignment: Alignment.center,
-                          child: Text(
-                            isDeleting ? 'Deleting...' : 'Delete Item',
-                            style: AppTextStyles.bodyBold,
-                          ),
+                        const SizedBox(height: 8),
+                        _buildCategoryDropdown(),
+                        const SizedBox(height: 18),
+                        const _FieldLabel('QUANTITY'),
+                        const SizedBox(height: 8),
+                        _QuantitySelector(
+                          quantity: quantity,
+                          onDecrease: () {
+                            if (quantity > 1) {
+                              setState(() {
+                                quantity--;
+                              });
+                            }
+                          },
+                          onIncrease: () {
+                            if (quantity < 999) {
+                              setState(() {
+                                quantity++;
+                              });
+                            }
+                          },
                         ),
-                      ),
-                    ],
-                  ],
+                        const SizedBox(height: 20),
+                        const _FieldLabel('APPEARANCE'),
+                        const SizedBox(height: 8),
+                        _AppearancePreview(
+                          icon: itemIcon,
+                          iconLabel: itemIconLabelForKey(selectedIconKey),
+                          category: selectedCategory,
+                          followsCategory: !iconManuallySelected,
+                          onPressed: isSaving || isDeleting
+                              ? null
+                              : _openIconPicker,
+                        ),
+                        const SizedBox(height: 20),
+                        const _FieldLabel('QR CODE'),
+                        const SizedBox(height: 8),
+                        if (widget.isEditing)
+                          _QrActionButton(
+                            label: currentItem?.hasQr == true
+                                ? 'View QR Code'
+                                : 'Generate QR Code',
+                            selected: currentItem?.hasQr == true,
+                            onPressed: isSaving || isDeleting
+                                ? null
+                                : _openQrScreen,
+                          )
+                        else
+                          _QrActionButton(
+                            label: hasQrCode
+                                ? 'QR Ready on Save'
+                                : 'Generate QR Code',
+                            semanticLabel: hasQrCode
+                                ? 'QR code will be generated when this item is saved'
+                                : 'Generate a QR code when this item is saved',
+                            selected: hasQrCode,
+                            onPressed: isSaving || isDeleting
+                                ? null
+                                : () {
+                                    setState(() {
+                                      hasQrCode = !hasQrCode;
+                                    });
+                                  },
+                          ),
+                        const SizedBox(height: 26),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _ActionButton(
+                                text: 'Cancel',
+                                filled: false,
+                                onPressed: isSaving || isDeleting
+                                    ? null
+                                    : () {
+                                        Navigator.pop(context);
+                                      },
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: _ActionButton(
+                                text: isSaving
+                                    ? 'Saving...'
+                                    : widget.isEditing
+                                    ? 'Save Changes'
+                                    : 'Save Item',
+                                filled: true,
+                                onPressed: isSaving || isDeleting
+                                    ? null
+                                    : _saveItem,
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (widget.isEditing) ...[
+                          const SizedBox(height: 20),
+                          _DeleteButton(
+                            deleting: isDeleting,
+                            onPressed: isDeleting || isSaving
+                                ? null
+                                : _confirmDelete,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
                 ),
-              ),
+              ],
             ),
           ],
         ),
@@ -908,32 +923,49 @@ class _TopBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 56,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      height: AppMetrics.topBarHeight,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
       decoration: const BoxDecoration(
         color: AppColors.background,
-        border: Border(bottom: BorderSide(color: AppColors.ink, width: 2)),
+        border: Border(
+          bottom: BorderSide(
+            color: AppColors.ink,
+            width: AppMetrics.borderWidth,
+          ),
+        ),
       ),
       child: Row(
         children: [
-          GestureDetector(
-            onTap: () {
-              Navigator.pop(context);
-            },
-            child: const SizedBox(
-              width: 40,
-              height: 40,
-              child: Icon(Icons.arrow_back, color: AppColors.ink, size: 24),
+          Semantics(
+            button: true,
+            label: 'Back',
+            child: SizedBox(
+              width: AppMetrics.touchTarget,
+              height: AppMetrics.touchTarget,
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () => Navigator.pop(context),
+                  borderRadius: BorderRadius.circular(AppMetrics.radius),
+                  child: const Icon(
+                    Icons.arrow_back,
+                    color: AppColors.ink,
+                    size: 22,
+                  ),
+                ),
+              ),
             ),
           ),
-
-          const Spacer(),
-
-          Text(title, style: AppTextStyles.bodyBold.copyWith(fontSize: 14)),
-
-          const Spacer(),
-
-          const SizedBox(width: 40),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppTextStyles.heading,
+            ),
+          ),
+          const SizedBox(width: 12),
         ],
       ),
     );
@@ -947,7 +979,10 @@ class _FieldLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(text, style: AppTextStyles.bodyBold.copyWith(fontSize: 13));
+    return Text(
+      text,
+      style: AppTextStyles.pixel.copyWith(color: AppColors.muted, fontSize: 7),
+    );
   }
 }
 
@@ -959,25 +994,29 @@ class _TextField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return TextField(
-      controller: controller,
-      style: AppTextStyles.bodyBold.copyWith(fontSize: 13),
-      decoration: InputDecoration(
-        hintText: hintText,
-        hintStyle: AppTextStyles.body.copyWith(fontSize: 13),
-        filled: true,
-        fillColor: AppColors.background,
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 14,
-          vertical: 13,
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderSide: const BorderSide(color: AppColors.ink, width: 2),
-          borderRadius: BorderRadius.circular(4),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderSide: const BorderSide(color: AppColors.green, width: 2),
-          borderRadius: BorderRadius.circular(4),
+    return Container(
+      height: 44,
+      decoration: BoxDecoration(
+        color: AppColors.background,
+        border: Border.all(color: AppColors.ink, width: 2),
+        borderRadius: BorderRadius.circular(AppMetrics.radius),
+        boxShadow: const [
+          BoxShadow(color: AppColors.ink, offset: Offset(3, 3)),
+        ],
+      ),
+      child: TextField(
+        controller: controller,
+        style: AppTextStyles.body.copyWith(color: AppColors.ink, fontSize: 13),
+        textInputAction: TextInputAction.done,
+        decoration: InputDecoration(
+          hintText: hintText,
+          hintStyle: AppTextStyles.body.copyWith(fontSize: 13),
+          border: InputBorder.none,
+          isDense: true,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 14,
+            vertical: 13,
+          ),
         ),
       ),
     );
@@ -1000,19 +1039,29 @@ class _CategoryDropdown extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 48,
+      height: 44,
       padding: const EdgeInsets.symmetric(horizontal: 14),
       decoration: BoxDecoration(
         color: AppColors.background,
         border: Border.all(color: AppColors.ink, width: 2),
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: BorderRadius.circular(AppMetrics.radius),
+        boxShadow: const [
+          BoxShadow(color: AppColors.ink, offset: Offset(3, 3)),
+        ],
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String>(
           value: value,
           isExpanded: true,
-          icon: const Icon(Icons.keyboard_arrow_down, color: AppColors.ink),
-          style: AppTextStyles.bodyBold.copyWith(fontSize: 13),
+          icon: const Icon(
+            Icons.keyboard_arrow_down,
+            color: AppColors.muted,
+            size: 20,
+          ),
+          style: AppTextStyles.body.copyWith(
+            color: AppColors.ink,
+            fontSize: 13,
+          ),
           dropdownColor: AppColors.background,
           items: categories.map((category) {
             final unavailable = category == unavailableValue;
@@ -1028,7 +1077,10 @@ class _CategoryDropdown extends StatelessWidget {
                         color: AppColors.muted,
                         fontSize: 13,
                       )
-                    : null,
+                    : AppTextStyles.body.copyWith(
+                        color: AppColors.ink,
+                        fontSize: 13,
+                      ),
               ),
             );
           }).toList(),
@@ -1058,56 +1110,86 @@ class _QuantitySelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        _QuantityButton(text: '−', onPressed: onDecrease),
-
-        Container(
-          width: 70,
-          height: 44,
-          alignment: Alignment.center,
-          decoration: const BoxDecoration(
-            color: AppColors.background,
-            border: Border.symmetric(
-              horizontal: BorderSide(color: AppColors.ink, width: 2),
+    return SizedBox(
+      height: 44,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _QuantityButton(
+            label: 'Decrease quantity',
+            text: '−',
+            onPressed: quantity > 1 ? onDecrease : null,
+          ),
+          Container(
+            width: 64,
+            height: 44,
+            alignment: Alignment.center,
+            decoration: const BoxDecoration(
+              color: AppColors.background,
+              border: Border.symmetric(
+                horizontal: BorderSide(color: AppColors.ink, width: 2),
+              ),
+            ),
+            child: Text(
+              quantity.toString(),
+              style: AppTextStyles.bodyBold.copyWith(fontSize: 16),
             ),
           ),
-          child: Text(
-            quantity.toString(),
-            style: AppTextStyles.bodyBold.copyWith(fontSize: 14),
+          _QuantityButton(
+            label: 'Increase quantity',
+            text: '+',
+            onPressed: quantity < 999 ? onIncrease : null,
           ),
-        ),
-
-        _QuantityButton(text: '+', onPressed: onIncrease),
-      ],
+        ],
+      ),
     );
   }
 }
 
 class _QuantityButton extends StatelessWidget {
+  final String label;
   final String text;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
-  const _QuantityButton({required this.text, required this.onPressed});
+  const _QuantityButton({
+    required this.label,
+    required this.text,
+    required this.onPressed,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onPressed,
-      child: Container(
-        width: 44,
-        height: 44,
-        decoration: BoxDecoration(
-          color: AppColors.ink,
-          border: Border.all(color: AppColors.ink, width: 2),
-          borderRadius: BorderRadius.circular(4),
-        ),
-        alignment: Alignment.center,
-        child: Text(
-          text,
-          style: AppTextStyles.bodyBold.copyWith(
-            color: AppColors.background,
-            fontSize: 18,
+    final enabled = onPressed != null;
+
+    return Semantics(
+      button: true,
+      enabled: enabled,
+      label: label,
+      excludeSemantics: true,
+      child: Opacity(
+        opacity: enabled ? 1 : .45,
+        child: SizedBox(
+          width: 44,
+          height: 44,
+          child: Material(
+            color: AppColors.ink,
+            shape: RoundedRectangleBorder(
+              side: const BorderSide(color: AppColors.ink, width: 2),
+              borderRadius: BorderRadius.circular(AppMetrics.radius),
+            ),
+            child: InkWell(
+              onTap: onPressed,
+              borderRadius: BorderRadius.circular(AppMetrics.radius),
+              child: Center(
+                child: Text(
+                  text,
+                  style: AppTextStyles.bodyBold.copyWith(
+                    color: AppColors.background,
+                    fontSize: 18,
+                  ),
+                ),
+              ),
+            ),
           ),
         ),
       ),
@@ -1115,96 +1197,532 @@ class _QuantityButton extends StatelessWidget {
   }
 }
 
-class _IconPreview extends StatelessWidget {
-  const _IconPreview();
+class _AppearancePreview extends StatelessWidget {
+  final IconData icon;
+  final String iconLabel;
+  final String category;
+  final bool followsCategory;
+  final VoidCallback? onPressed;
+
+  const _AppearancePreview({
+    required this.icon,
+    required this.iconLabel,
+    required this.category,
+    required this.followsCategory,
+    required this.onPressed,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 82,
-      height: 82,
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        border: Border.all(color: AppColors.ink, width: 2),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      alignment: Alignment.center,
-      child: const Icon(
-        Icons.inventory_2_outlined,
-        color: AppColors.ink,
-        size: 38,
+    final enabled = onPressed != null;
+    final subtitle = followsCategory
+        ? '$iconLabel · suggested by $category'
+        : '$iconLabel · custom for this item';
+
+    return Semantics(
+      button: true,
+      enabled: enabled,
+      label: 'Change item icon. $subtitle',
+      excludeSemantics: true,
+      child: Container(
+        width: double.infinity,
+        constraints: const BoxConstraints(minHeight: 64),
+        decoration: BoxDecoration(
+          color: AppColors.card,
+          border: Border.all(color: AppColors.ink, width: 2),
+          borderRadius: BorderRadius.circular(AppMetrics.radius),
+          boxShadow: const [
+            BoxShadow(color: AppColors.ink, offset: Offset(3, 3)),
+          ],
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onPressed,
+            borderRadius: BorderRadius.circular(AppMetrics.radius),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              child: Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: AppColors.background,
+                      border: Border.all(color: AppColors.ink, width: 1.5),
+                      borderRadius: BorderRadius.circular(AppMetrics.radius),
+                    ),
+                    child: Icon(icon, color: AppColors.ink, size: 24),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Item icon',
+                          style: AppTextStyles.bodyBold.copyWith(fontSize: 13),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          subtitle,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTextStyles.body.copyWith(fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(
+                    Icons.edit_outlined,
+                    color: enabled ? AppColors.ink : AppColors.muted,
+                    size: 18,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
 }
 
-class _PhotoButton extends StatelessWidget {
-  const _PhotoButton();
+class _IconPickerResult {
+  final String iconKey;
+  final bool followCategory;
+
+  const _IconPickerResult({
+    required this.iconKey,
+    required this.followCategory,
+  });
+}
+
+class _ItemIconPickerSheet extends StatefulWidget {
+  final String selectedIconKey;
+  final String defaultIconKey;
+  final String category;
+
+  const _ItemIconPickerSheet({
+    required this.selectedIconKey,
+    required this.defaultIconKey,
+    required this.category,
+  });
+
+  @override
+  State<_ItemIconPickerSheet> createState() => _ItemIconPickerSheetState();
+}
+
+class _ItemIconPickerSheetState extends State<_ItemIconPickerSheet> {
+  final TextEditingController searchController = TextEditingController();
+  final ScrollController scrollController = ScrollController();
+  String query = '';
+  bool expanded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    scrollController.addListener(_expandFromScroll);
+  }
+
+  void _expandFromScroll() {
+    if (!expanded &&
+        scrollController.hasClients &&
+        scrollController.offset > 0) {
+      setState(() {
+        expanded = true;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    searchController.dispose();
+    scrollController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 48,
-      decoration: BoxDecoration(
+    final options = searchItemIconOptions(query);
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * (expanded ? 0.86 : 0.46),
+      ),
+      decoration: const BoxDecoration(
         color: AppColors.background,
-        border: Border.all(color: AppColors.ink, width: 2),
-        borderRadius: BorderRadius.circular(4),
+        border: Border(top: BorderSide(color: AppColors.ink, width: 2)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        boxShadow: [BoxShadow(color: AppColors.ink, offset: Offset(0, -5))],
       ),
-      alignment: Alignment.center,
-      child: Text(
-        '+ Add Photo',
-        style: AppTextStyles.bodyBold.copyWith(fontSize: 13),
+      child: SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          controller: scrollController,
+          padding: EdgeInsets.fromLTRB(
+            20,
+            10,
+            20,
+            24 + MediaQuery.viewInsetsOf(context).bottom,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 44,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.card,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                'Choose Item Icon',
+                style: AppTextStyles.heading.copyWith(fontSize: 18),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Search the icon library or use the category default.',
+                style: AppTextStyles.body,
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: searchController,
+                onTap: () {
+                  if (!expanded) {
+                    setState(() {
+                      expanded = true;
+                    });
+                  }
+                },
+                onChanged: (value) {
+                  setState(() {
+                    expanded = true;
+                    query = value;
+                  });
+                },
+                style: AppTextStyles.body.copyWith(fontSize: 13),
+                decoration: InputDecoration(
+                  hintText: 'Search icons...',
+                  prefixIcon: const Icon(Icons.search, color: AppColors.muted),
+                  suffixIcon: query.isEmpty
+                      ? null
+                      : IconButton(
+                          tooltip: 'Clear icon search',
+                          onPressed: () {
+                            searchController.clear();
+                            setState(() {
+                              query = '';
+                            });
+                          },
+                          icon: const Icon(Icons.close, size: 18),
+                        ),
+                  filled: true,
+                  fillColor: AppColors.background,
+                  enabledBorder: OutlineInputBorder(
+                    borderSide: const BorderSide(
+                      color: AppColors.ink,
+                      width: 2,
+                    ),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderSide: const BorderSide(
+                      color: AppColors.green,
+                      width: 2,
+                    ),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+              _CategoryDefaultIconButton(
+                category: widget.category,
+                iconKey: widget.defaultIconKey,
+                selected: widget.selectedIconKey == widget.defaultIconKey,
+                onPressed: () {
+                  Navigator.pop(
+                    context,
+                    _IconPickerResult(
+                      iconKey: widget.defaultIconKey,
+                      followCategory: true,
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Text(
+                    query.isEmpty ? 'OTHER ICONS' : 'SEARCH RESULTS',
+                    style: AppTextStyles.pixel.copyWith(
+                      color: AppColors.muted,
+                      fontSize: 7,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '${options.length}',
+                    style: AppTextStyles.pixel.copyWith(
+                      color: AppColors.muted,
+                      fontSize: 7,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              if (options.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 20),
+                  child: Center(
+                    child: Text(
+                      'No matching icons.',
+                      style: AppTextStyles.body.copyWith(
+                        color: AppColors.muted,
+                      ),
+                    ),
+                  ),
+                )
+              else
+                GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 4,
+                    crossAxisSpacing: 8,
+                    mainAxisSpacing: 8,
+                    childAspectRatio: 1.15,
+                  ),
+                  itemCount: options.length,
+                  itemBuilder: (context, index) {
+                    final option = options[index];
+
+                    return _IconChoiceButton(
+                      option: option,
+                      selected: widget.selectedIconKey == option.key,
+                      onPressed: () {
+                        Navigator.pop(
+                          context,
+                          _IconPickerResult(
+                            iconKey: option.key,
+                            followCategory: false,
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
 }
 
-class _QrSection extends StatelessWidget {
-  final bool hasQrCode;
-  final ValueChanged<bool> onChanged;
+class _CategoryDefaultIconButton extends StatelessWidget {
+  final String category;
+  final String iconKey;
+  final bool selected;
+  final VoidCallback onPressed;
 
-  const _QrSection({required this.hasQrCode, required this.onChanged});
+  const _CategoryDefaultIconButton({
+    required this.category,
+    required this.iconKey,
+    required this.selected,
+    required this.onPressed,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      height: 52,
       decoration: BoxDecoration(
-        color: AppColors.card,
-        border: Border.all(color: AppColors.ink, width: 2),
-        borderRadius: BorderRadius.circular(4),
+        color: selected ? AppColors.card : AppColors.background,
+        border: Border.all(
+          color: selected ? AppColors.green : AppColors.ink,
+          width: 2,
+        ),
+        borderRadius: BorderRadius.circular(AppMetrics.radius),
+        boxShadow: const [
+          BoxShadow(color: AppColors.ink, offset: Offset(3, 3)),
+        ],
       ),
-      child: Row(
-        children: [
-          const Icon(Icons.qr_code_2, size: 36, color: AppColors.ink),
-
-          const SizedBox(width: 12),
-
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(AppMetrics.radius),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(
               children: [
-                Text('QR Code', style: AppTextStyles.bodyBold),
+                Icon(
+                  itemIconDataForKey(iconKey),
+                  color: AppColors.ink,
+                  size: 22,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Use category default',
+                        style: AppTextStyles.bodyBold.copyWith(fontSize: 12),
+                      ),
+                      Text(
+                        '$category · ${itemIconLabelForKey(iconKey)}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTextStyles.body.copyWith(fontSize: 10),
+                      ),
+                    ],
+                  ),
+                ),
+                if (selected)
+                  const Icon(Icons.check, color: AppColors.green, size: 18),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
-                const SizedBox(height: 3),
+class _IconChoiceButton extends StatelessWidget {
+  final ItemIconOption option;
+  final bool selected;
+  final VoidCallback onPressed;
 
+  const _IconChoiceButton({
+    required this.option,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: '${option.label} item icon',
+      child: Container(
+        decoration: BoxDecoration(
+          color: selected ? AppColors.card : AppColors.background,
+          border: Border.all(
+            color: selected ? AppColors.green : AppColors.ink,
+            width: 2,
+          ),
+          borderRadius: BorderRadius.circular(AppMetrics.radius),
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onPressed,
+            borderRadius: BorderRadius.circular(AppMetrics.radius),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(option.icon, color: AppColors.ink, size: 23),
+                const SizedBox(height: 4),
                 Text(
-                  hasQrCode
-                      ? 'QR code will be created when this item is saved.'
-                      : 'Optional. You can generate one later.',
-                  style: AppTextStyles.body,
+                  option.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTextStyles.bodyBold.copyWith(fontSize: 10),
                 ),
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
 
-          Switch(
-            value: hasQrCode,
-            onChanged: onChanged,
-            activeThumbColor: AppColors.background,
-            activeTrackColor: AppColors.green,
+class _QrActionButton extends StatelessWidget {
+  final String label;
+  final String? semanticLabel;
+  final bool selected;
+  final VoidCallback? onPressed;
+
+  const _QrActionButton({
+    required this.label,
+    this.semanticLabel,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onPressed != null;
+    const idleBackground = Color(0xFFFEEAD0);
+    final background = selected ? AppColors.orange : idleBackground;
+    final foreground = selected ? AppColors.ink : AppColors.orange;
+    final borderColor = selected ? AppColors.ink : AppColors.orange;
+    final shadowColor = selected ? AppColors.ink : AppColors.orange;
+
+    return Semantics(
+      button: true,
+      selected: selected,
+      enabled: enabled,
+      label: semanticLabel ?? label,
+      excludeSemantics: true,
+      child: Opacity(
+        opacity: enabled ? 1 : .55,
+        child: Container(
+          width: double.infinity,
+          height: 44,
+          decoration: BoxDecoration(
+            color: background,
+            border: Border.all(color: borderColor, width: 2),
+            borderRadius: BorderRadius.circular(AppMetrics.radius),
+            boxShadow: [
+              BoxShadow(color: shadowColor, offset: const Offset(3, 3)),
+            ],
           ),
-        ],
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: onPressed,
+              borderRadius: BorderRadius.circular(AppMetrics.radius),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      selected ? Icons.check : Icons.qr_code_2,
+                      color: foreground,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      label,
+                      maxLines: 1,
+                      style: AppTextStyles.bodyBold.copyWith(
+                        color: foreground,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -1213,7 +1731,7 @@ class _QrSection extends StatelessWidget {
 class _ActionButton extends StatelessWidget {
   final String text;
   final bool filled;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   const _ActionButton({
     required this.text,
@@ -1223,23 +1741,88 @@ class _ActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onPressed,
-      child: Container(
-        height: 48,
-        decoration: BoxDecoration(
-          color: filled ? AppColors.ink : AppColors.background,
-          border: Border.all(color: AppColors.ink, width: 2),
-          borderRadius: BorderRadius.circular(4),
-          boxShadow: filled
-              ? const [BoxShadow(color: AppColors.green, offset: Offset(3, 3))]
-              : null,
+    final enabled = onPressed != null;
+
+    return Semantics(
+      button: true,
+      enabled: enabled,
+      label: text,
+      child: Opacity(
+        opacity: enabled ? 1 : .55,
+        child: Container(
+          height: AppMetrics.primaryButtonHeight,
+          decoration: BoxDecoration(
+            color: filled ? AppColors.ink : AppColors.card,
+            border: Border.all(color: AppColors.ink, width: 2),
+            borderRadius: BorderRadius.circular(AppMetrics.radius),
+            boxShadow: [
+              BoxShadow(
+                color: filled ? AppColors.green : AppColors.ink,
+                offset: Offset(filled ? 4 : 3, filled ? 4 : 3),
+              ),
+            ],
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: onPressed,
+              borderRadius: BorderRadius.circular(AppMetrics.radius),
+              child: Center(
+                child: Text(
+                  text,
+                  style: AppTextStyles.bodyBold.copyWith(
+                    color: filled ? AppColors.background : AppColors.ink,
+                  ),
+                ),
+              ),
+            ),
+          ),
         ),
-        alignment: Alignment.center,
-        child: Text(
-          text,
-          style: AppTextStyles.bodyBold.copyWith(
-            color: filled ? AppColors.background : AppColors.ink,
+      ),
+    );
+  }
+}
+
+class _DeleteButton extends StatelessWidget {
+  final bool deleting;
+  final VoidCallback? onPressed;
+
+  const _DeleteButton({required this.deleting, required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      enabled: onPressed != null,
+      label: deleting ? 'Deleting item' : 'Delete Item',
+      child: Opacity(
+        opacity: onPressed == null ? .55 : 1,
+        child: Container(
+          width: double.infinity,
+          height: AppMetrics.primaryButtonHeight,
+          decoration: BoxDecoration(
+            color: AppColors.background,
+            border: Border.all(
+              color: AppColors.ink,
+              width: AppMetrics.strongBorderWidth,
+            ),
+            borderRadius: BorderRadius.circular(AppMetrics.radius),
+            boxShadow: const [
+              BoxShadow(color: AppColors.ink, offset: Offset(4, 4)),
+            ],
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: onPressed,
+              borderRadius: BorderRadius.circular(AppMetrics.radius),
+              child: Center(
+                child: Text(
+                  deleting ? 'Deleting...' : 'Delete Item',
+                  style: AppTextStyles.bodyBold,
+                ),
+              ),
+            ),
           ),
         ),
       ),
