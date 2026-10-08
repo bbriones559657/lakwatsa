@@ -117,6 +117,7 @@ Future<void> _prepareScreen(
                   activityRepository: activityRepository,
                   itemRepository: _ItemRepository(),
                   listRepository: _ListRepository(),
+                  requestReminderPermission: () async => true,
                 ),
               ),
             ),

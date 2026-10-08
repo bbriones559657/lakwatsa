@@ -1,8 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/activity.dart' as model;
 import '../models/item_list.dart';
+import '../repositories/firestore_activity_repository.dart';
+import '../services/activity_reminder_service.dart';
+import '../services/auth_service.dart';
 import 'activities/activities_screen.dart';
+import 'activities/activity_details_screen.dart';
 import 'activities/activity_return_check_screen.dart';
 import 'home/home_screen.dart';
 import 'items/my_items_screen.dart';
@@ -17,29 +23,156 @@ class MainScreen extends StatefulWidget {
   State<MainScreen> createState() => _MainScreenState();
 }
 
-class _MainScreenState extends State<MainScreen> {
+class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   static const _tabCount = 4;
 
   int currentIndex = 0;
   late final List<Widget?> pages;
 
+  StreamSubscription<List<model.Activity>>? _reminderSubscription;
+  StreamSubscription<ActivityReminderTapTarget>? _reminderTapSubscription;
+  String? _reminderUserId;
+  String? _pendingReminderActivityId;
+  bool _openingReminderActivity = false;
+  List<model.Activity> _latestReminderActivities = const [];
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     pages = List<Widget?>.filled(_tabCount, null);
     pages[0] = _createPage(0);
+    _startReminderTapHandling();
+    _startReminderSync();
+  }
+
+  void _startReminderTapHandling() {
+    _reminderTapSubscription = ActivityReminderService.instance.notificationTaps
+        .listen((target) {
+          final user = AuthService().currentUser;
+
+          if (user == null || target.userId != user.uid) {
+            return;
+          }
+
+          _pendingReminderActivityId = target.activityId;
+          _tryOpenPendingReminderActivity();
+        });
+
+    unawaited(ActivityReminderService.instance.initialize());
+  }
+
+  void _startReminderSync() {
+    final user = AuthService().currentUser;
+    if (user == null) {
+      return;
+    }
+
+    _reminderUserId = user.uid;
+    ActivityReminderService.instance.activateUser(user.uid);
+    final repository = FirestoreActivityRepository(userId: user.uid);
+
+    _reminderSubscription = repository.watchActivities().listen(
+      (activities) {
+        _latestReminderActivities = List<model.Activity>.unmodifiable(
+          activities,
+        );
+        _tryOpenPendingReminderActivity();
+        _syncActivityReminders();
+      },
+      onError: (_) {
+        // Core Activity screens surface Firestore errors themselves. Reminder
+        // sync must never interrupt normal navigation.
+      },
+    );
+  }
+
+  void _syncActivityReminders() {
+    final userId = _reminderUserId;
+    if (userId == null) {
+      return;
+    }
+
+    unawaited(
+      ActivityReminderService.instance.reconcileForUser(
+        userId: userId,
+        activities: _latestReminderActivities,
+      ),
+    );
+  }
+
+  void _tryOpenPendingReminderActivity() {
+    final activityId = _pendingReminderActivityId;
+
+    if (!mounted || activityId == null || _openingReminderActivity) {
+      return;
+    }
+
+    model.Activity? targetActivity;
+    for (final activity in _latestReminderActivities) {
+      if (activity.id == activityId) {
+        targetActivity = activity;
+        break;
+      }
+    }
+
+    if (targetActivity == null) {
+      return;
+    }
+
+    _pendingReminderActivityId = null;
+    _openingReminderActivity = true;
+
+    final activity = targetActivity;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        _openingReminderActivity = false;
+        return;
+      }
+
+      setState(() {
+        currentIndex = 3;
+        pages[3] ??= _createPage(3);
+      });
+
+      Navigator.of(context)
+          .push(
+            MaterialPageRoute<void>(
+              builder: (context) => ActivityDetailsScreen(activity: activity),
+            ),
+          )
+          .whenComplete(() {
+            _openingReminderActivity = false;
+            _tryOpenPendingReminderActivity();
+          });
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _syncActivityReminders();
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _reminderSubscription?.cancel();
+    _reminderTapSubscription?.cancel();
+    super.dispose();
   }
 
   Widget _createPage(int index) {
     return switch (index) {
       0 => HomeScreen(
-          onOpenItems: () => _selectTab(1),
-          onCreateList: _openCreateList,
-          onOpenLists: () => _selectTab(2),
-          onOpenActivities: () => _selectTab(3),
-          onContinueActivity: _openActiveReturnCheck,
-          onOpenList: _openList,
-        ),
+        onOpenItems: () => _selectTab(1),
+        onCreateList: _openCreateList,
+        onOpenLists: () => _selectTab(2),
+        onOpenActivities: () => _selectTab(3),
+        onContinueActivity: _openActiveReturnCheck,
+        onOpenList: _openList,
+      ),
       1 => const MyItemsScreen(),
       2 => const ListsScreen(),
       3 => const ActivitiesScreen(),

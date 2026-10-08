@@ -9,6 +9,8 @@ import '../../repositories/firestore_item_repository.dart';
 import '../../repositories/firestore_list_repository.dart';
 import '../../repositories/item_repository.dart';
 import '../../repositories/list_repository.dart';
+import '../../services/activity_reminder_policy.dart';
+import '../../services/activity_reminder_service.dart';
 import '../../services/auth_service.dart';
 import '../../theme/app_theme.dart';
 import 'activity_item_selection.dart';
@@ -20,12 +22,14 @@ class CreateActivityScreen extends StatefulWidget {
   final ActivityRepository? activityRepository;
   final ItemRepository? itemRepository;
   final ListRepository? listRepository;
+  final Future<bool> Function()? requestReminderPermission;
 
   const CreateActivityScreen({
     super.key,
     this.activityRepository,
     this.itemRepository,
     this.listRepository,
+    this.requestReminderPermission,
   });
 
   @override
@@ -1056,8 +1060,41 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
         status: 'UPCOMING',
       );
 
+      String? reminderNotice;
+      var activityToCreate = activity;
+
+      if (activity.reminderEnabled) {
+        final reminderAt = ActivityReminderPolicy.scheduledAt(
+          activity,
+          now: DateTime.now(),
+        );
+
+        if (reminderAt == null) {
+          activityToCreate = activity.copyWith(reminderEnabled: false);
+          reminderNotice =
+              'Activity created without a reminder because the reminder time '
+              'has already passed.';
+        } else if (ActivityReminderService.isSupportedPlatform) {
+          final requestPermission =
+              widget.requestReminderPermission ??
+              ActivityReminderService.instance.requestPermission;
+          final permissionGranted = await requestPermission();
+
+          if (!mounted) {
+            return;
+          }
+
+          if (!permissionGranted) {
+            activityToCreate = activity.copyWith(reminderEnabled: false);
+            reminderNotice =
+                'Activity created without a reminder because notifications '
+                'are turned off.';
+          }
+        }
+      }
+
       await activityRepository!.addActivityWithItems(
-        activity: activity,
+        activity: activityToCreate,
         items: activityItems,
       );
 
@@ -1066,7 +1103,9 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
       }
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Activity created successfully.')),
+        SnackBar(
+          content: Text(reminderNotice ?? 'Activity created successfully.'),
+        ),
       );
 
       Navigator.pop(context);
