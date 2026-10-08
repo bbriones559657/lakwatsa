@@ -127,14 +127,17 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
   @override
   Widget build(BuildContext context) {
     return PopScope<Object?>(
-      canPop: _partialActivityId == null || _allowPartialExit,
+      canPop: !isSaving && (_partialActivityId == null || _allowPartialExit),
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) _didPop = true;
-        if (!didPop && _partialActivityId != null) _confirmPartialExit();
+        if (!didPop && !isSaving && _partialActivityId != null) {
+          _confirmPartialExit();
+        }
       },
       child: Scaffold(
         backgroundColor: AppColors.background,
         appBar: AppBar(
+          automaticallyImplyLeading: !isSaving,
           backgroundColor: AppColors.background,
           foregroundColor: AppColors.ink,
           elevation: 0,
@@ -199,6 +202,7 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
 
             TextField(
               controller: nameController,
+              enabled: !isSaving,
               style: AppTextStyles.bodyBold,
               decoration: _inputDecoration('Example: Davao Beach Trip'),
             ),
@@ -215,15 +219,17 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
               items: activityTypes.map((type) {
                 return DropdownMenuItem(value: type, child: Text(type));
               }).toList(),
-              onChanged: (value) {
-                if (value == null) {
-                  return;
-                }
+              onChanged: isSaving
+                  ? null
+                  : (value) {
+                      if (value == null) {
+                        return;
+                      }
 
-                setState(() {
-                  selectedType = value;
-                });
-              },
+                      setState(() {
+                        selectedType = value;
+                      });
+                    },
             ),
 
             const SizedBox(height: 20),
@@ -264,7 +270,7 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
             _PickerBox(
               icon: Icons.calendar_today_outlined,
               text: _formatDate(selectedDate),
-              onTap: _pickDate,
+              onTap: isSaving ? null : _pickDate,
             ),
 
             const SizedBox(height: 20),
@@ -282,7 +288,7 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
                       _PickerBox(
                         icon: Icons.access_time,
                         text: startTime.format(context),
-                        onTap: _pickStartTime,
+                        onTap: isSaving ? null : _pickStartTime,
                       ),
                     ],
                   ),
@@ -301,7 +307,7 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
                       _PickerBox(
                         icon: Icons.access_time,
                         text: endTime.format(context),
-                        onTap: _pickEndTime,
+                        onTap: isSaving ? null : _pickEndTime,
                       ),
                     ],
                   ),
@@ -338,11 +344,13 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
 
                       Switch(
                         value: reminderEnabled,
-                        onChanged: (value) {
-                          setState(() {
-                            reminderEnabled = value;
-                          });
-                        },
+                        onChanged: isSaving
+                            ? null
+                            : (value) {
+                                setState(() {
+                                  reminderEnabled = value;
+                                });
+                              },
                       ),
                     ],
                   ),
@@ -371,15 +379,17 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
                               ),
                             );
                           }).toList(),
-                          onChanged: (value) {
-                            if (value == null) {
-                              return;
-                            }
+                          onChanged: isSaving
+                              ? null
+                              : (value) {
+                                  if (value == null) {
+                                    return;
+                                  }
 
-                            setState(() {
-                              reminderMinutes = value;
-                            });
-                          },
+                                  setState(() {
+                                    reminderMinutes = value;
+                                  });
+                                },
                         ),
                       ],
                     ),
@@ -934,6 +944,8 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
   }
 
   Future<void> _pickDate() async {
+    if (isSaving) return;
+
     final now = DateTime.now();
 
     final picked = await showDatePicker(
@@ -943,7 +955,7 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
       lastDate: DateTime(now.year + 5),
     );
 
-    if (picked != null) {
+    if (mounted && !isSaving && picked != null) {
       setState(() {
         selectedDate = picked;
       });
@@ -951,12 +963,14 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
   }
 
   Future<void> _pickStartTime() async {
+    if (isSaving) return;
+
     final picked = await showTimePicker(
       context: context,
       initialTime: startTime,
     );
 
-    if (picked != null) {
+    if (mounted && !isSaving && picked != null) {
       setState(() {
         startTime = picked;
       });
@@ -964,9 +978,11 @@ class _CreateActivityScreenState extends State<CreateActivityScreen> {
   }
 
   Future<void> _pickEndTime() async {
+    if (isSaving) return;
+
     final picked = await showTimePicker(context: context, initialTime: endTime);
 
-    if (picked != null) {
+    if (mounted && !isSaving && picked != null) {
       setState(() {
         endTime = picked;
       });
@@ -1571,7 +1587,7 @@ class _Label extends StatelessWidget {
 class _PickerBox extends StatelessWidget {
   final IconData icon;
   final String text;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   const _PickerBox({
     required this.icon,
@@ -1581,24 +1597,32 @@ class _PickerBox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        height: 52,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        decoration: BoxDecoration(
-          color: AppColors.background,
-          border: Border.all(color: AppColors.ink, width: 2),
-          borderRadius: BorderRadius.circular(4),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, color: AppColors.ink, size: 20),
+    final enabled = onTap != null;
+    return Semantics(
+      button: true,
+      enabled: enabled,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Opacity(
+          opacity: enabled ? 1 : .55,
+          child: Container(
+            height: 52,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              color: AppColors.background,
+              border: Border.all(color: AppColors.ink, width: 2),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Row(
+              children: [
+                Icon(icon, color: AppColors.ink, size: 20),
 
-            const SizedBox(width: 9),
+                const SizedBox(width: 9),
 
-            Expanded(child: Text(text, style: AppTextStyles.bodyBold)),
-          ],
+                Expanded(child: Text(text, style: AppTextStyles.bodyBold)),
+              ],
+            ),
+          ),
         ),
       ),
     );

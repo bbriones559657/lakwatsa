@@ -20,11 +20,7 @@ class AddItemScreen extends StatefulWidget {
   final Item? item;
   final bool returnSavedItem;
 
-  const AddItemScreen({
-    super.key,
-    this.item,
-    this.returnSavedItem = false,
-  });
+  const AddItemScreen({super.key, this.item, this.returnSavedItem = false});
 
   bool get isEditing => item != null;
 
@@ -94,9 +90,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
   Future<void> _openCategoryManager() async {
     await Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (context) => const ManageCategoriesScreen(),
-      ),
+      MaterialPageRoute(builder: (context) => const ManageCategoriesScreen()),
     );
 
     await _syncSelectedCategoryDefaultIcon();
@@ -308,24 +302,48 @@ class _AddItemScreenState extends State<AddItemScreen> {
       ),
     );
 
-    final user = AuthService().currentUser;
-
-    if (user == null) {
+    if (!mounted) {
       return;
     }
 
-    final repository = FirestoreItemRepository(userId: user.uid);
+    try {
+      final user = AuthService().currentUser;
 
-    final refreshedItem = await repository.getItem(item.id);
+      if (user == null) {
+        return;
+      }
 
-    if (!mounted || refreshedItem == null) {
-      return;
+      final repository = FirestoreItemRepository(userId: user.uid);
+      final refreshedItem = await repository.getItem(item.id);
+
+      if (!mounted) {
+        return;
+      }
+
+      if (refreshedItem == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('This Item is no longer available.')),
+        );
+        return;
+      }
+
+      setState(() {
+        currentItem = refreshedItem;
+        hasQrCode = refreshedItem.hasQr;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Could not refresh this Item. Check your connection and try again.',
+          ),
+        ),
+      );
     }
-
-    setState(() {
-      currentItem = refreshedItem;
-      hasQrCode = refreshedItem.hasQr;
-    });
   }
 
   Future<void> _deleteItem() async {
@@ -627,11 +645,12 @@ class _AddItemScreenState extends State<AddItemScreen> {
 
   List<String> _categoryNames(List<ItemCategory> customCategories) {
     final names = <String>[...ItemCategory.builtInNames];
-    final customNames = customCategories
-        .map((category) => category.name.trim())
-        .where((name) => name.isNotEmpty)
-        .toList()
-      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    final customNames =
+        customCategories
+            .map((category) => category.name.trim())
+            .where((name) => name.isNotEmpty)
+            .toList()
+          ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
 
     for (final name in customNames) {
       if (!_containsCategoryName(names, name)) {
@@ -765,13 +784,17 @@ class _AddItemScreenState extends State<AddItemScreen> {
                               onPressed: isSaving ? null : _openCategoryManager,
                               style: TextButton.styleFrom(
                                 minimumSize: const Size(56, 44),
-                                padding: const EdgeInsets.symmetric(horizontal: 8),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                ),
                                 foregroundColor: AppColors.green,
                                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                               ),
                               child: Text(
                                 'Manage',
-                                style: AppTextStyles.bodyBold.copyWith(fontSize: 12),
+                                style: AppTextStyles.bodyBold.copyWith(
+                                  fontSize: 12,
+                                ),
                               ),
                             ),
                           ],
@@ -892,7 +915,6 @@ class _AddItemScreenState extends State<AddItemScreen> {
   }
 }
 
-
 class _TopBar extends StatelessWidget {
   final String title;
 
@@ -959,10 +981,7 @@ class _FieldLabel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Text(
       text,
-      style: AppTextStyles.pixel.copyWith(
-        color: AppColors.muted,
-        fontSize: 7,
-      ),
+      style: AppTextStyles.pixel.copyWith(color: AppColors.muted, fontSize: 7),
     );
   }
 }
@@ -987,10 +1006,7 @@ class _TextField extends StatelessWidget {
       ),
       child: TextField(
         controller: controller,
-        style: AppTextStyles.body.copyWith(
-          color: AppColors.ink,
-          fontSize: 13,
-        ),
+        style: AppTextStyles.body.copyWith(color: AppColors.ink, fontSize: 13),
         textInputAction: TextInputAction.done,
         decoration: InputDecoration(
           hintText: hintText,
@@ -1312,7 +1328,9 @@ class _ItemIconPickerSheetState extends State<_ItemIconPickerSheet> {
   }
 
   void _expandFromScroll() {
-    if (!expanded && scrollController.hasClients && scrollController.offset > 0) {
+    if (!expanded &&
+        scrollController.hasClients &&
+        scrollController.offset > 0) {
       setState(() {
         expanded = true;
       });
@@ -1338,16 +1356,9 @@ class _ItemIconPickerSheetState extends State<_ItemIconPickerSheet> {
       ),
       decoration: const BoxDecoration(
         color: AppColors.background,
-        border: Border(
-          top: BorderSide(color: AppColors.ink, width: 2),
-        ),
+        border: Border(top: BorderSide(color: AppColors.ink, width: 2)),
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.ink,
-            offset: Offset(0, -5),
-          ),
-        ],
+        boxShadow: [BoxShadow(color: AppColors.ink, offset: Offset(0, -5))],
       ),
       child: SafeArea(
         top: false,
@@ -1580,11 +1591,7 @@ class _CategoryDefaultIconButton extends StatelessWidget {
                   ),
                 ),
                 if (selected)
-                  const Icon(
-                    Icons.check,
-                    color: AppColors.green,
-                    size: 18,
-                  ),
+                  const Icon(Icons.check, color: AppColors.green, size: 18),
               ],
             ),
           ),

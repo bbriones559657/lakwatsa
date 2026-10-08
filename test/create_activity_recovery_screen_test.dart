@@ -163,6 +163,54 @@ void main() {
     await tester.tap(_createButton);
     await tester.pump();
     expect(repository.createCalls, 1);
+    expect(find.text('Creating...'), findsOneWidget);
+
+    expect(tester.widget<Switch>(find.byType(Switch)).onChanged, isNull);
+    expect(
+      tester
+          .widget<DropdownButton<int>>(find.byType(DropdownButton<int>))
+          .onChanged,
+      isNull,
+    );
+
+    await tester.drag(find.byType(ListView).first, const Offset(0, 2000));
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(find.byType(TextField).first).enabled,
+      false,
+    );
+    expect(
+      tester
+          .widget<DropdownButtonFormField<String>>(
+            find.byType(DropdownButtonFormField<String>),
+          )
+          .onChanged,
+      isNull,
+    );
+    await tester.scrollUntilVisible(
+      find.byIcon(Icons.calendar_today_outlined),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pump();
+    expect(
+      tester
+          .widget<GestureDetector>(
+            find
+                .ancestor(
+                  of: find.byIcon(Icons.calendar_today_outlined),
+                  matching: find.byType(GestureDetector),
+                )
+                .first,
+          )
+          .onTap,
+      isNull,
+    );
+
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+    expect(find.text('Creating...'), findsOneWidget);
+    expect(find.text('Open creator'), findsNothing);
 
     pending.complete(
       repository.submittedActivity!.copyWith(id: 'created-activity'),
