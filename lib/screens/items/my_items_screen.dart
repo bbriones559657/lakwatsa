@@ -8,6 +8,7 @@ import '../../services/auth_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/lakwatsa_ui.dart';
 import 'add_item_screen.dart';
+import 'bulk_qr_export_screen.dart';
 import 'manage_categories_screen.dart';
 
 class MyItemsScreen extends StatefulWidget {
@@ -53,6 +54,11 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
             LakwatsaTopBar(
               title: 'My Items',
               actions: [
+                LakwatsaHeaderAction(
+                  icon: Icons.qr_code_2,
+                  label: 'Export QR labels',
+                  onPressed: _openBulkQrExport,
+                ),
                 LakwatsaHeaderAction(
                   icon: Icons.category_outlined,
                   label: 'Manage categories',
@@ -187,17 +193,19 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
     List<Item> items,
   ) {
     final names = <String>['All', ...ItemCategory.builtInNames];
-    final customNames = customCategories
-        .map((category) => category.name.trim())
-        .where((name) => name.isNotEmpty)
-        .toList()
-      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-    final legacyNames = items
-        .map((item) => item.category.trim())
-        .where((name) => name.isNotEmpty)
-        .toSet()
-        .toList()
-      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    final customNames =
+        customCategories
+            .map((category) => category.name.trim())
+            .where((name) => name.isNotEmpty)
+            .toList()
+          ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    final legacyNames =
+        items
+            .map((item) => item.category.trim())
+            .where((name) => name.isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
 
     for (final name in [...customNames, ...legacyNames]) {
       if (!names.any((existing) => ItemCategory.sameName(existing, name))) {
@@ -215,7 +223,8 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
       final matchesSearch =
           search.isEmpty || item.name.toLowerCase().contains(search);
 
-      final matchesCategory = activeCategory == 'All' ||
+      final matchesCategory =
+          activeCategory == 'All' ||
           ItemCategory.sameName(item.category, activeCategory);
 
       return matchesSearch && matchesCategory;
@@ -244,6 +253,13 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
     return widgets;
   }
 
+  Future<void> _openBulkQrExport() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const BulkQrExportScreen()),
+    );
+  }
+
   Future<void> _openAddItem() async {
     await Navigator.push(
       context,
@@ -257,13 +273,10 @@ class _MyItemsScreenState extends State<MyItemsScreen> {
   Future<void> _openCategories() async {
     await Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (context) => const ManageCategoriesScreen(),
-      ),
+      MaterialPageRoute(builder: (context) => const ManageCategoriesScreen()),
     );
   }
 }
-
 
 class _CategoryChips extends StatelessWidget {
   final List<String> categories;
@@ -354,6 +367,7 @@ class _CategoryChip extends StatelessWidget {
     );
   }
 }
+
 class _ItemSection extends StatelessWidget {
   final String title;
   final List<Item> items;
@@ -448,76 +462,79 @@ class _ItemCard extends StatelessWidget {
             onTap: onTap,
             borderRadius: BorderRadius.circular(4),
             child: Row(
-          children: [
-            const SizedBox(width: 10),
+              children: [
+                const SizedBox(width: 10),
 
-            Container(
-              width: 4,
-              height: 64,
-              decoration: BoxDecoration(
-                color: item.hasQr ? AppColors.orange : AppColors.muted,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-
-            const SizedBox(width: 10),
-
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: AppColors.card,
-                border: Border.all(color: AppColors.ink, width: 1.5),
-                borderRadius: BorderRadius.circular(3),
-              ),
-              alignment: Alignment.center,
-              child: Icon(
-                _getItemIcon(item.icon),
-                color: AppColors.ink,
-                size: 23,
-              ),
-            ),
-
-            const SizedBox(width: 12),
-
-            Expanded(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    item.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppTextStyles.bodyBold.copyWith(fontSize: 14),
+                Container(
+                  width: 4,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    color: item.hasQr ? AppColors.orange : AppColors.muted,
+                    borderRadius: BorderRadius.circular(2),
                   ),
-
-                  const SizedBox(height: 4),
-
-                  Text(
-                    '${item.category} • Qty ${item.quantity}',
-                    style: AppTextStyles.body.copyWith(fontSize: 11),
-                  ),
-                ],
-              ),
-            ),
-
-            Container(
-              margin: const EdgeInsets.only(right: 14),
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-              decoration: BoxDecoration(
-                color: item.hasQr ? AppColors.green : AppColors.card,
-                border: Border.all(color: AppColors.ink, width: 1.5),
-                borderRadius: BorderRadius.circular(2),
-              ),
-              child: Text(
-                item.hasQr ? 'QR' : 'NO QR',
-                style: AppTextStyles.pixelDark.copyWith(
-                  color: item.hasQr ? AppColors.background : AppColors.ink,
-                  fontSize: 5,
                 ),
-              ),
-            ),
+
+                const SizedBox(width: 10),
+
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: AppColors.card,
+                    border: Border.all(color: AppColors.ink, width: 1.5),
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                  alignment: Alignment.center,
+                  child: Icon(
+                    _getItemIcon(item.icon),
+                    color: AppColors.ink,
+                    size: 23,
+                  ),
+                ),
+
+                const SizedBox(width: 12),
+
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        item.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTextStyles.bodyBold.copyWith(fontSize: 14),
+                      ),
+
+                      const SizedBox(height: 4),
+
+                      Text(
+                        '${item.category} • Qty ${item.quantity}',
+                        style: AppTextStyles.body.copyWith(fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+
+                Container(
+                  margin: const EdgeInsets.only(right: 14),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: item.hasQr ? AppColors.green : AppColors.card,
+                    border: Border.all(color: AppColors.ink, width: 1.5),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                  child: Text(
+                    item.hasQr ? 'QR' : 'NO QR',
+                    style: AppTextStyles.pixelDark.copyWith(
+                      color: item.hasQr ? AppColors.background : AppColors.ink,
+                      fontSize: 5,
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
